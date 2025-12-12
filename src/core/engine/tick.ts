@@ -55,6 +55,31 @@ export function createEngineTick(
       if (timeoutEvents.length) runtime.pushEngineEvents(timeoutEvents);
 
       const raw = drainDecisionBuffer(runtime) as unknown as unknown[];
+      // invalid shape: emit engine-event and free inFlight (requestId-guarded) to avoid 60s sticking.
+      const invalidShapeEvents: EngineEvent[] = [];
+      for (const x of raw) {
+        if (!x || typeof x !== "object") continue;
+        if (!("requestId" in x) || !("agentId" in x)) continue;
+        // if it has the minimal ids but lacks fields required for DecisionResult, treat as invalid_shape
+        if (!("intentId" in x) || !("contextHash" in x) || !("decision" in x)) {
+          const agentId = (x as any).agentId as string;
+          const requestId = (x as any).requestId as string;
+          invalidShapeEvents.push({
+            type: "AI_RESULT_DISCARDED",
+            tick: _engineTick,
+            agentId,
+            requestId,
+            reason: "invalid_shape",
+          });
+          runtime.metrics.decisionDiscardedTotal++;
+          const inflight = runtime.inFlightByAgent.get(agentId);
+          if (inflight && inflight.requestId === requestId) {
+            runtime.inFlightByAgent.delete(agentId);
+          }
+        }
+      }
+      if (invalidShapeEvents.length) runtime.pushEngineEvents(invalidShapeEvents);
+
       const rawResults = raw.filter((x): x is DecisionResult => {
         if (!x || typeof x !== "object") return false;
         return (

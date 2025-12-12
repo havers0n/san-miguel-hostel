@@ -29,6 +29,11 @@ export function filterDecisionResults(
         requestId: r.requestId,
         reason: "stale_context",
       });
+      // free inFlight if this result matches the currently tracked requestId
+      const inflight = runtime.inFlightByAgent.get(r.agentId);
+      if (inflight && inflight.requestId === r.requestId) {
+        runtime.inFlightByAgent.delete(r.agentId);
+      }
       continue;
     }
 
@@ -42,6 +47,11 @@ export function filterDecisionResults(
         requestId: r.requestId,
         reason: "duplicate_intent_ttl",
       });
+      // free inFlight if this result matches the currently tracked requestId
+      const inflight = runtime.inFlightByAgent.get(r.agentId);
+      if (inflight && inflight.requestId === r.requestId) {
+        runtime.inFlightByAgent.delete(r.agentId);
+      }
       continue;
     }
 
