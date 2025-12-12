@@ -9,6 +9,8 @@ export type SchedulerConfig = {
   promptVersion: string;
   ttlMs: number;
   cooldownMs: number;
+  // Iter 13: allowlist is part of the minimal decision context (server validates action ∈ allowlist).
+  allowlistActions: string[];
   // Iter 12.3: allow deterministic requestId generation (headless).
   // If not provided, falls back to crypto.randomUUID/getRandomValues/legacy fallback.
   requestIdFactory?: (input: {
@@ -22,7 +24,7 @@ export type SchedulerConfig = {
 };
 
 export type Scheduler = {
-  tick(aiIntents: string[], world: WorldState, api: SchedulerAPI): void;
+  tick(aiIntents: string[], world: WorldState, api: SchedulerAPI, nowMs: number): void;
 };
 
 function randomUUIDFallback(): string {
@@ -46,9 +48,7 @@ export function createScheduler(worldOps: WorldOps, config: SchedulerConfig): Sc
   let seq = 0;
 
   return {
-    tick(aiIntents, world, api) {
-      const nowMs = worldOps.getNowMs();
-
+    tick(aiIntents, world, api, nowMs) {
       // Global concurrency limit
       if (api.inFlightCount() >= api.maxConcurrentRequestsTotal) return;
 
@@ -60,6 +60,8 @@ export function createScheduler(worldOps: WorldOps, config: SchedulerConfig): Sc
         if (lastMs != null && nowMs - lastMs < config.cooldownMs) continue;
 
         const contextHash = worldOps.getAgentContextHash(world, agentId);
+        // Guard against invalid agent ids (shouldn't happen, but scheduler must not throw).
+        if (contextHash.startsWith("missing:")) continue;
         const intentId = `${agentId}:${contextHash}`;
 
         const req: DecisionRequest = {
@@ -78,6 +80,7 @@ export function createScheduler(worldOps: WorldOps, config: SchedulerConfig): Sc
           createdAtMs: nowMs,
           promptVersion: config.promptVersion,
           ttlMs: config.ttlMs,
+          context: worldOps.getAgentDecisionContext(world, agentId, config.allowlistActions),
         };
 
         const enqueued = api.enqueue(req);

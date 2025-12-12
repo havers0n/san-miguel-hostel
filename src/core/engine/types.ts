@@ -31,6 +31,27 @@ export type Command = {
   payload: unknown;
 };
 
+// Iter 13: minimal context for Cloud Run proxy (worker still must not see WorldState).
+export type DecideContext = {
+  agentId: string;
+  roomId: string;
+  state: string;
+  needs?: {
+    energy?: number;
+    hunger?: number;
+    anxiety?: number;
+    aggression?: number;
+  };
+  nearbyAgents?: Array<{
+    id: string;
+    role?: string;
+    dist?: number;
+    state?: string;
+  }>;
+  rooms?: Array<{ id: string; name?: string }>;
+  allowlistActions: string[];
+};
+
 export type DecisionRequest = {
   requestId: string;
   agentId: string;
@@ -39,6 +60,8 @@ export type DecisionRequest = {
   createdAtMs: number;
   promptVersion: string;
   ttlMs: number;
+  // Iter 13: serialized minimal context assembled synchronously inside tick/scheduler.
+  context: DecideContext;
 };
 
 export type DecisionResult = {

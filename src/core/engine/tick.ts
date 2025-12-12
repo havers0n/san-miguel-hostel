@@ -118,7 +118,7 @@ export function createEngineTick(
       const { world: world3, events: events3, aiIntents } = worldOps.step(world2, simDt);
 
       // Scheduler wiring (no network/async here; only planning into runtime queue/inFlight).
-      scheduler.tick(aiIntents, world3, schedulerAPI);
+      scheduler.tick(aiIntents, world3, schedulerAPI, nowMs);
 
       return {
         world: world3,

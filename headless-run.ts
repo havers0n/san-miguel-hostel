@@ -89,6 +89,17 @@ function runHeadless(opts: { ticks: number; seed: number }): {
     promptVersion: 'headless-test',
     ttlMs: 20_000,
     cooldownMs: 0,
+    allowlistActions: [
+      'IDLE',
+      'GO_TO_ROOM',
+      'EAT_IN_KITCHEN',
+      'REST_IN_DORM',
+      'TALK_TO_AGENT',
+      'CALM_SOMEONE',
+      'START_CONFLICT',
+      'REPORT_TO_GUARD',
+      'WANDER',
+    ],
     requestIdFactory: ({ seq, agentId, createdAtMs }) =>
       // детерминированный requestId (без crypto/Date.now/Math.random)
       `req-${seq}-${agentId}-${Math.floor(createdAtMs)}`,

@@ -76,6 +76,17 @@ function App() {
       promptVersion: 'iter11-local',
       ttlMs: 20_000,
       cooldownMs: 2_000,
+      allowlistActions: [
+        'IDLE',
+        'GO_TO_ROOM',
+        'EAT_IN_KITCHEN',
+        'REST_IN_DORM',
+        'TALK_TO_AGENT',
+        'CALM_SOMEONE',
+        'START_CONFLICT',
+        'REPORT_TO_GUARD',
+        'WANDER',
+      ],
     });
     const engineTick = createEngineTick(runtime, worldOps, scheduler);
 
