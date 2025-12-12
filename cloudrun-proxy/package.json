@@ -1,0 +1,23 @@
+{
+  "name": "san-miguel-cloudrun-proxy",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "tsx": "^4.20.5",
+    "typescript": "~5.8.2"
+  }
+}
+
+
