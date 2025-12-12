@@ -3,7 +3,15 @@
 
 import type { AgentDecision, WorldEvent, WorldState } from "../../../types/world";
 import { commandMoveAgent, moveAgentToRoom, applyAgentDecision, stepMockWorld } from "../../../mock/worldMock";
-import type { Command } from "../engine/types";
+
+// Локальный минимальный тип команды: world-адаптер не должен зависеть от engine-слоя.
+type Command = {
+  id: string;
+  type: string;
+  createdAtMs: number;
+  actorId?: string;
+  payload: unknown;
+};
 
 export interface WorldOps {
   getAgentContextHash(world: WorldState, agentId: string): string;
@@ -57,11 +65,13 @@ export function createWorldOps(): WorldOps {
 
     applyDecisions(world, decisions) {
       let next = world;
-      const startLen = next.events.length;
+      const startLen = world.events.length;
       for (const d of decisions) {
         next = applyAgentDecision(next, d);
       }
-      return { world: next, events: next.events.slice(startLen) };
+      const endLen = next.events.length;
+      const delta = endLen >= startLen ? next.events.slice(startLen) : [];
+      return { world: next, events: delta };
     },
 
     reduceCommands(world, commands) {
@@ -94,11 +104,13 @@ export function createWorldOps(): WorldOps {
     },
 
     step(world, simDt) {
-      const startLen = world.events.length;
       const next = stepMockWorld(world, simDt);
+      const startLen = world.events.length;
+      const endLen = next.events.length;
+      const delta = endLen >= startLen ? next.events.slice(startLen) : [];
       return {
         world: next,
-        events: next.events.slice(startLen),
+        events: delta,
         aiIntents: next.agentsNeedingDecision ?? [],
       };
     },
