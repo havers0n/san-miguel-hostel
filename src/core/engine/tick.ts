@@ -12,19 +12,30 @@ import type { EngineRuntime } from "./runtime";
 import type { WorldOps } from "../world/ops";
 import type { DecisionResult } from "./types";
 import type { EngineEvent } from "./types";
+import type { Scheduler } from "./scheduler";
+import { makeSchedulerAPI } from "./scheduler_api";
 
 const INFLIGHT_TIMEOUT_MS = 60_000;
 
-export function createEngineTick(runtime: EngineRuntime, worldOps: WorldOps): {
+export function createEngineTick(
+  runtime: EngineRuntime,
+  worldOps: WorldOps,
+  scheduler: Scheduler
+): {
   tick(
     world: WorldState,
     simDt: number,
     engineTick: number
   ): { world: WorldState; domainEvents: WorldEvent[]; aiIntents: string[] };
 } {
+  // schedulerAPI is created once; tick supplies the current engineTick via closure.
+  let tickForApi = 0;
+  const schedulerAPI = makeSchedulerAPI(runtime, () => tickForApi);
+
   return {
     tick(world: WorldState, simDt: number, _engineTick: number) {
       const nowMs = worldOps.getNowMs();
+      tickForApi = _engineTick;
 
       // InFlight timeout cleanup (no retries here; just free locks and emit engine-event).
       const timeoutEvents: EngineEvent[] = [];
@@ -80,6 +91,9 @@ export function createEngineTick(runtime: EngineRuntime, worldOps: WorldOps): {
       const { world: world2, events: events2 } = worldOps.reduceCommands(world1, commands);
 
       const { world: world3, events: events3, aiIntents } = worldOps.step(world2, simDt);
+
+      // Scheduler wiring (no network/async here; only planning into runtime queue/inFlight).
+      scheduler.tick(aiIntents, world3, schedulerAPI);
 
       return {
         world: world3,
