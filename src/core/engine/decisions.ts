@@ -47,7 +47,11 @@ export function filterDecisionResults(
 
     runtime.seenIntentIds.add(r.intentId, nowMs);
     // accepted result closes inFlight lifecycle for this agent
-    runtime.inFlightByAgent.delete(r.agentId);
+    // guard: don't delete a newer inFlight started after this requestId
+    const inflight = runtime.inFlightByAgent.get(r.agentId);
+    if (!inflight || inflight.requestId === r.requestId) {
+      runtime.inFlightByAgent.delete(r.agentId);
+    }
     accepted.push(r);
   }
 

@@ -11,6 +11,7 @@ import { filterDecisionResults } from "./decisions";
 import type { EngineRuntime } from "./runtime";
 import type { WorldOps } from "../world/ops";
 import type { DecisionResult } from "./types";
+import type { EngineEvent } from "./types";
 
 const INFLIGHT_TIMEOUT_MS = 60_000;
 
@@ -26,21 +27,21 @@ export function createEngineTick(runtime: EngineRuntime, worldOps: WorldOps): {
       const nowMs = worldOps.getNowMs();
 
       // InFlight timeout cleanup (no retries here; just free locks and emit engine-event).
+      const timeoutEvents: EngineEvent[] = [];
       for (const [agentId, inflight] of runtime.inFlightByAgent) {
         if (nowMs - inflight.startedAtMs > INFLIGHT_TIMEOUT_MS) {
           runtime.inFlightByAgent.delete(agentId);
           runtime.metrics.decisionDiscardedTotal++;
-          runtime.pushEngineEvents([
-            {
-              type: "AI_RESULT_DISCARDED",
-              tick: _engineTick,
-              agentId,
-              requestId: inflight.requestId,
-              reason: "inflight_timeout",
-            },
-          ]);
+          timeoutEvents.push({
+            type: "AI_RESULT_DISCARDED",
+            tick: _engineTick,
+            agentId,
+            requestId: inflight.requestId,
+            reason: "inflight_timeout",
+          });
         }
       }
+      if (timeoutEvents.length) runtime.pushEngineEvents(timeoutEvents);
 
       const raw = drainDecisionBuffer(runtime) as unknown as unknown[];
       const rawResults = raw.filter((x): x is DecisionResult => {
