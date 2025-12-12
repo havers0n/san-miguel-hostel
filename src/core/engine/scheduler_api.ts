@@ -7,7 +7,7 @@ import { enqueueWithFairBackpressure } from "./queue";
 
 export type SchedulerAPI = {
   // write allowlist
-  enqueue(req: DecisionRequest): void;
+  enqueue(req: DecisionRequest): boolean;
   setInFlight(agentId: string, inFlight: InFlight): void;
   clearInFlight(agentId: string): void;
   metrics: EngineMetrics;
@@ -25,7 +25,8 @@ export function makeSchedulerAPI(
   return {
     enqueue(req) {
       // enqueueWithFairBackpressure сам пушит AI_BACKPRESSURE event и инкрементит метрики.
-      enqueueWithFairBackpressure(runtime, getTick(), req);
+      const { enqueued } = enqueueWithFairBackpressure(runtime, getTick(), req);
+      return enqueued;
     },
     setInFlight(agentId, inFlight) {
       runtime.inFlightByAgent.set(agentId, inFlight);

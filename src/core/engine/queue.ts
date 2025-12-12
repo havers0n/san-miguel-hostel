@@ -7,10 +7,10 @@ export function enqueueWithFairBackpressure(
   runtime: EngineRuntime,
   tick: Tick,
   req: DecisionRequest
-): { dropped?: DecisionRequest } {
+): { enqueued: true; dropped?: DecisionRequest } {
   if (runtime.queue.length < runtime.maxQueueSize) {
     runtime.queue.push(req);
-    return {};
+    return { enqueued: true };
   }
 
   // 1) drop oldest of same agent (first match in queue order)
@@ -32,7 +32,7 @@ export function enqueueWithFairBackpressure(
     },
   ]);
 
-  return { dropped };
+  return { enqueued: true, dropped };
 }
 
 

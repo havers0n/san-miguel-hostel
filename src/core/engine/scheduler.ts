@@ -15,6 +15,22 @@ export type Scheduler = {
   tick(aiIntents: string[], world: WorldState, api: SchedulerAPI): void;
 };
 
+function randomUUIDFallback(): string {
+  const c = (globalThis as any).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  if (c?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    c.getRandomValues(bytes);
+    // RFC 4122 v4
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  // Last resort: uniqueness best-effort (non-crypto).
+  return `fallback-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 export function createScheduler(worldOps: WorldOps, config: SchedulerConfig): Scheduler {
   const lastEnqueuedAtMsByAgent = new Map<string, number>();
 
@@ -36,7 +52,7 @@ export function createScheduler(worldOps: WorldOps, config: SchedulerConfig): Sc
         const intentId = `${agentId}:${contextHash}`;
 
         const req: DecisionRequest = {
-          requestId: crypto.randomUUID(),
+          requestId: randomUUIDFallback(),
           agentId,
           intentId,
           contextHash,
@@ -45,7 +61,8 @@ export function createScheduler(worldOps: WorldOps, config: SchedulerConfig): Sc
           ttlMs: config.ttlMs,
         };
 
-        api.enqueue(req);
+        const enqueued = api.enqueue(req);
+        if (!enqueued) continue;
 
         const inflight: InFlight = {
           requestId: req.requestId,
