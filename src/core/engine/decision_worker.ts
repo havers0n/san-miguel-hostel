@@ -20,10 +20,10 @@ export function startDecisionWorker(
     if (stopped) return;
     if (runtime.queue.length === 0) return;
 
-    while (
-      runningCount < runtime.maxConcurrentRequestsTotal &&
-      runtime.queue.length > 0
-    ) {
+    const available = runtime.maxConcurrentRequestsTotal - runtime.inFlightByAgent.size;
+    const allowedToStart = Math.max(0, available);
+
+    while (runningCount < allowedToStart && runtime.queue.length > 0) {
       const req = runtime.queue.shift();
       if (!req) break;
 
@@ -42,7 +42,10 @@ export function startDecisionWorker(
               reason: "worker_error",
             },
           ]);
-          runtime.inFlightByAgent.delete(req.agentId);
+          const inflight = runtime.inFlightByAgent.get(req.agentId);
+          if (inflight && inflight.requestId === req.requestId) {
+            runtime.inFlightByAgent.delete(req.agentId);
+          }
         })
         .finally(() => {
           runningCount--;
