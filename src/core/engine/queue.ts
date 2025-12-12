@@ -27,8 +27,10 @@ export function enqueueWithFairBackpressure(
     {
       type: "AI_BACKPRESSURE",
       tick,
-      agentId: req.agentId,
+      enqueuedAgentId: req.agentId,
+      droppedAgentId: dropped?.agentId,
       droppedIntentId: dropped?.intentId,
+      droppedRequestId: dropped?.requestId,
     },
   ]);
 

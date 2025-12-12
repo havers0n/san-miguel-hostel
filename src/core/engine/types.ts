@@ -4,7 +4,16 @@ export type Tick = number;
 
 export type EngineEvent =
   | { type: "SIM_DROPPED_TICKS"; tick: Tick; dropped: number }
-  | { type: "AI_BACKPRESSURE"; tick: Tick; agentId: string; droppedIntentId?: string }
+  | {
+      type: "AI_BACKPRESSURE";
+      tick: Tick;
+      // Agent that triggered the enqueue attempt.
+      enqueuedAgentId: string;
+      // Request that got dropped by backpressure (may belong to a different agent).
+      droppedAgentId?: string;
+      droppedIntentId?: string;
+      droppedRequestId?: string;
+    }
   | { type: "COMMAND_REJECTED"; tick: Tick; commandId: string; reason: string }
   | {
       type: "AI_RESULT_DISCARDED";

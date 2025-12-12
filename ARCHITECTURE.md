@@ -62,9 +62,9 @@ Required mappings:
 - backpressure drops -> `AI_BACKPRESSURE`
 - discarded results -> `AI_RESULT_DISCARDED`
 
-If an invariant can be violated and there is no EngineEvent for it, it's a bug.
+Each runtime-violatable invariant must be enforced by either EngineEvent emission, hard assert in headless, or both.
 
-### 11) Deterministic time in headless
+### Headless determinism: time
 
 In headless mode (tests / batch simulation runs), time must be injectable.
 
@@ -136,6 +136,7 @@ If any invariant can be violated without an engine-event or a failing headless r
 2) **No “orphan” inFlight locks**
 
 At any observation point in the headless loop (after worker step + after `engineTick.tick`):
+This is checked after worker.step() and after engineTick.tick(), not mid-transaction.
 
 - For every `agentId ∈ runtime.inFlightByAgent` there exists an outstanding request for that agent in one of:
   - `runtime.queue`
@@ -148,8 +149,11 @@ If this is violated, the agent can get stuck until timeout and determinism break
 
 If backpressure drops a request (same-agent oldest or global oldest), then:
 
-- The dropped request’s agent inFlight MUST be cleared **iff** it matches that dropped requestId.
-- The engine MUST emit `AI_BACKPRESSURE` and increment `backpressureDropsTotal`.
+- The engine MUST emit `AI_BACKPRESSURE` that identifies:
+  - `enqueuedAgentId`: the agent that triggered the enqueue attempt
+  - `droppedAgentId` / `droppedRequestId`: the agent/request removed by backpressure
+- The engine MUST increment `backpressureDropsTotal`.
+- The dropped request’s agent inFlight MUST be cleared **iff** it matches that dropped requestId (requestId-guarded).
 
 4) **Accepted results are applied exactly once and close exactly one lock**
 
@@ -187,5 +191,10 @@ Given identical headless parameters (seed, ticks) and identical code:
 
 - `worldSignature(finalWorld)` MUST be identical across runs.
 - This is enforced by CI via `npm run test:headless` (golden verify).
+
+9) **Atomic drain boundary**
+
+- `drainDecisionBuffer` and `drainCommandBuffer` must do an atomic swap+clear.
+- `tick` must use only drained snapshots (no reads of live buffers).
 
 
