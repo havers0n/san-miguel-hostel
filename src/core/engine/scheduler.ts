@@ -9,6 +9,16 @@ export type SchedulerConfig = {
   promptVersion: string;
   ttlMs: number;
   cooldownMs: number;
+  // Iter 12.3: allow deterministic requestId generation (headless).
+  // If not provided, falls back to crypto.randomUUID/getRandomValues/legacy fallback.
+  requestIdFactory?: (input: {
+    seq: number;
+    agentId: string;
+    intentId: string;
+    contextHash: string;
+    createdAtMs: number;
+    promptVersion: string;
+  }) => string;
 };
 
 export type Scheduler = {
@@ -33,6 +43,7 @@ function randomUUIDFallback(): string {
 
 export function createScheduler(worldOps: WorldOps, config: SchedulerConfig): Scheduler {
   const lastEnqueuedAtMsByAgent = new Map<string, number>();
+  let seq = 0;
 
   return {
     tick(aiIntents, world, api) {
@@ -52,7 +63,15 @@ export function createScheduler(worldOps: WorldOps, config: SchedulerConfig): Sc
         const intentId = `${agentId}:${contextHash}`;
 
         const req: DecisionRequest = {
-          requestId: randomUUIDFallback(),
+          requestId:
+            config.requestIdFactory?.({
+              seq: seq++,
+              agentId,
+              intentId,
+              contextHash,
+              createdAtMs: nowMs,
+              promptVersion: config.promptVersion,
+            }) ?? randomUUIDFallback(),
           agentId,
           intentId,
           contextHash,

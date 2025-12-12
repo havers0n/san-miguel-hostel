@@ -6,8 +6,39 @@ import { Vector3 } from 'three';
 
 // --- Static Data Definitions ---
 
-const r = (min: number, max: number) => Math.random() * (max - min) + min;
-const rPick = <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+type RNG = () => number;
+
+function mulberry32(seed: number): RNG {
+  let t = seed >>> 0;
+  return () => {
+    t = (t + 0x6D2B79F5) >>> 0;
+    let x = t;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function fnv1a32u(input: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = (hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24))) >>> 0;
+  }
+  return hash >>> 0;
+}
+
+function unit01FromKey(key: string): number {
+  return fnv1a32u(key) / 4294967296;
+}
+
+function r(rng: RNG, min: number, max: number): number {
+  return rng() * (max - min) + min;
+}
+
+function rPick<T>(rng: RNG, arr: T[]): T {
+  return arr[Math.floor(rng() * arr.length)];
+}
 
 const ROOMS: Room[] = [
   { id: 'r1', name: 'Dorm A', position: { x: -5, y: 1.5, z: -5 }, size: { x: 8, y: 3, z: 8 } },
@@ -42,7 +73,7 @@ const ROLES: AgentRole[] = ['RESIDENT', 'SOCIAL_WORKER', 'GUARD', 'NEWCOMER', 'T
 
 // --- Helpers ---
 
-function createDefaultMemory(agentId: string): AgentMemory {
+function createDefaultMemory(agentId: string, rng: RNG): AgentMemory {
   const baseTraits: AgentTrait[] = [
     { key: 'IMPULSIVE', level: 0 },
     { key: 'ANXIOUS', level: 0 },
@@ -51,9 +82,9 @@ function createDefaultMemory(agentId: string): AgentMemory {
     { key: 'WITHDRAWN', level: 0 },
   ];
 
-  // Randomize traits slightly
+  // Deterministic (seeded) trait variation for reproducible headless runs.
   baseTraits.forEach(t => {
-    const roll = Math.random();
+    const roll = rng();
     if (roll > 0.85) t.level = 2;
     else if (roll > 0.6) t.level = 1;
   });
@@ -67,7 +98,7 @@ function createDefaultMemory(agentId: string): AgentMemory {
   };
 }
 
-function createAgent(i: number): Agent {
+function createAgent(i: number, rng: RNG): Agent {
   const id = `agent-${i}`;
   const role = ROLES[i % ROLES.length];
   
@@ -79,9 +110,9 @@ function createAgent(i: number): Agent {
     name: NAMES[i % NAMES.length],
     role,
     roomId: 'r3',
-    position: { x: r(-6, 6), y: 0, z: r(7, 9) }, // Start in Common Area
+    position: { x: r(rng, -6, 6), y: 0, z: r(rng, 7, 9) }, // Start in Common Area
     direction: { x: 0, y: 0, z: 1 },
-    speed: r(3.0, 4.5),
+    speed: r(rng, 3.0, 4.5),
     state: 'IDLE',
     nav: {
       path: [],
@@ -89,29 +120,35 @@ function createAgent(i: number): Agent {
       targetWorldPos: null,
       isMoving: false,
     },
-    energy: r(0.5, 1),
-    hunger: r(0, 0.5),
-    anxiety: isGuard ? 0.1 : r(0, 0.4),
-    aggression: isGuard ? 0.1 : r(0, 0.2),
+    energy: r(rng, 0.5, 1),
+    hunger: r(rng, 0, 0.5),
+    anxiety: isGuard ? 0.1 : r(rng, 0, 0.4),
+    aggression: isGuard ? 0.1 : r(rng, 0, 0.2),
 
     ai: {
-      memory: createDefaultMemory(id),
+      memory: createDefaultMemory(id, rng),
       currentIntent: null,
       lastThinkTick: -100, // Ready immediately
-      thinkCooldownTicks: 90 + Math.floor(Math.random() * 60), // ~3-5s
+      thinkCooldownTicks: 90 + Math.floor(rng() * 60), // ~3-5s
     }
   };
 }
 
 // --- Initialization ---
 
-export function createInitialWorldState(): WorldState {
+export function createInitialWorldState(opts?: { seed?: number; agentCount?: number; rng?: RNG }): WorldState {
+  // Default сохраняет прежнее поведение (недетерминированный Math.random) для UI.
+  // Для headless детерминизма передаём seed или rng.
+  const rng =
+    opts?.rng ??
+    (opts?.seed != null ? mulberry32((opts.seed ?? 1) >>> 0) : Math.random);
+  const agentCount = opts?.agentCount ?? 5;
   return {
     tick: 0,
     timeOfDay: 'DAY',
     rooms: ROOMS,
     envObjects: ENV_OBJECTS,
-    agents: Array.from({ length: 5 }).map((_, i) => createAgent(i)),
+    agents: Array.from({ length: agentCount }).map((_, i) => createAgent(i, rng)),
     events: [],
     agentsNeedingDecision: [],
     pendingDecisions: [],
@@ -171,6 +208,15 @@ export function applyAgentDecision(world: WorldState, decision: AgentDecision): 
   const agent = next.agents[agentIndex];
   const now = next.tick;
 
+  const pickInRoom = (room: Room, salt: string) => {
+    // Deterministic point selection: depends only on world.tick + agent + room + salt.
+    const u1 = unit01FromKey(`${now}:${agent.id}:${room.id}:${salt}:x`);
+    const u2 = unit01FromKey(`${now}:${agent.id}:${room.id}:${salt}:z`);
+    const dx = (u1 * 2 - 1) * (room.size.x / 3);
+    const dz = (u2 * 2 - 1) * (room.size.z / 3);
+    return { x: room.position.x + dx, z: room.position.z + dz };
+  };
+
   // Helper to trigger movement
   const triggerMove = (targetX: number, targetZ: number) => {
     next = moveAgentToPoint(next, agent.id, targetX, targetZ);
@@ -178,8 +224,9 @@ export function applyAgentDecision(world: WorldState, decision: AgentDecision): 
 
   // Helper to create event
   const addEvent = (type: string, desc: string, targetId?: string) => {
+    const idx = next.events.length;
     next.events.push({
-      id: `evt-${now}-${agent.id}-${Math.random().toString(36).substr(2, 4)}`,
+      id: `evt-${now}-${agent.id}-${type}-${idx}`,
       tick: now,
       type: type as any,
       description: desc,
@@ -201,9 +248,9 @@ export function applyAgentDecision(world: WorldState, decision: AgentDecision): 
       if (decision.targetRoomId) {
         const room = next.rooms.find(r => r.id === decision.targetRoomId);
         if (room) {
-          // Move to random point in room
-          const tx = room.position.x + r(-room.size.x/3, room.size.x/3);
-          const tz = room.position.z + r(-room.size.z/3, room.size.z/3);
+          const p = pickInRoom(room, "GO_TO_ROOM");
+          const tx = p.x;
+          const tz = p.z;
           triggerMove(tx, tz);
           addEvent('MOVEMENT', `${agent.name} is heading to ${room.name}.`);
         }
@@ -213,8 +260,9 @@ export function applyAgentDecision(world: WorldState, decision: AgentDecision): 
     case 'EAT_IN_KITCHEN': {
       const kitchen = next.rooms.find(r => r.name.includes('Kitchen') || r.id === 'r4');
       if (kitchen) {
-        const tx = kitchen.position.x + r(-1, 1);
-        const tz = kitchen.position.z + r(-1, 1);
+        const p = pickInRoom(kitchen, "EAT_IN_KITCHEN");
+        const tx = p.x;
+        const tz = p.z;
         triggerMove(tx, tz);
         addEvent('HELP_REQUEST', `${agent.name} goes to the kitchen to eat. (${decision.reason})`);
       }
@@ -224,8 +272,9 @@ export function applyAgentDecision(world: WorldState, decision: AgentDecision): 
       // Find nearest dorm or specific one
       const dorm = next.rooms.find(r => r.name.startsWith('Dorm'));
       if (dorm) {
-        const tx = dorm.position.x + r(-dorm.size.x/3, dorm.size.x/3);
-        const tz = dorm.position.z + r(-dorm.size.z/3, dorm.size.z/3);
+        const p = pickInRoom(dorm, "REST_IN_DORM");
+        const tx = p.x;
+        const tz = p.z;
         triggerMove(tx, tz);
         addEvent('MOVEMENT', `${agent.name} goes to rest in ${dorm.name}.`);
       }
@@ -255,8 +304,9 @@ export function applyAgentDecision(world: WorldState, decision: AgentDecision): 
     default:
        const currentRoom = next.rooms.find(rm => rm.id === agent.roomId);
        if (currentRoom) {
-          const tx = currentRoom.position.x + r(-currentRoom.size.x/3, currentRoom.size.x/3);
-          const tz = currentRoom.position.z + r(-currentRoom.size.z/3, currentRoom.size.z/3);
+          const p = pickInRoom(currentRoom, "WANDER");
+          const tx = p.x;
+          const tz = p.z;
           triggerMove(tx, tz);
        }
       break;

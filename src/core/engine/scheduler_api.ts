@@ -25,7 +25,16 @@ export function makeSchedulerAPI(
   return {
     enqueue(req) {
       // enqueueWithFairBackpressure сам пушит AI_BACKPRESSURE event и инкрементит метрики.
-      const { enqueued } = enqueueWithFairBackpressure(runtime, getTick(), req);
+      const { enqueued, dropped } = enqueueWithFairBackpressure(runtime, getTick(), req);
+      // Важно для inFlight lifecycle:
+      // enqueueWithFairBackpressure может выкинуть (dropped) самый старый request (того же агента или глобально).
+      // Если dropped оказался чужим агентом, его inFlight lock должен быть освобождён, иначе агент зависнет до timeout.
+      if (dropped) {
+        const inflight = runtime.inFlightByAgent.get(dropped.agentId);
+        if (inflight && inflight.requestId === dropped.requestId) {
+          runtime.inFlightByAgent.delete(dropped.agentId);
+        }
+      }
       return enqueued;
     },
     setInFlight(agentId, inFlight) {
