@@ -1,0 +1,5 @@
+{
+  "name": "San Miguel Hostel 3D Viewer",
+  "description": "A pure WebGL visualization module for the San Miguel Hostel simulation, rendering WorldState without internal simulation logic.",
+  "requestFramePermissions": []
+}
