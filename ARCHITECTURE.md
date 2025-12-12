@@ -112,4 +112,80 @@ If scheduler needs new capabilities, the API must be extended explicitly.
   - set only when enqueue succeeded
   - cleared on accepted result, discard (requestId-guarded), or timeout
 
+## Engine Invariants
+
+This section is the **formal spec** of what must always hold.
+If any invariant can be violated without an engine-event or a failing headless regression, it's a bug.
+
+### Definitions
+
+- **Queue**: `runtime.queue` (scheduler -> worker transport, bounded with fair backpressure)
+- **DecisionBuffer**: `runtime.decisionBuffer` (worker -> engine)
+- **InFlight**: `runtime.inFlightByAgent` (runtime lock per agent; not business state)
+- **Accepted DecisionResult**: a `DecisionResult` that passes:
+  - requestId exactly-once
+  - contextHash matches current `worldOps.getAgentContextHash(world, agentId)`
+  - intentId TTL exactly-once
+
+### Invariants (MUST)
+
+1) **Global concurrency bound**
+
+- Always: `runtime.inFlightByAgent.size <= runtime.maxConcurrentRequestsTotal`
+
+2) **No “orphan” inFlight locks**
+
+At any observation point in the headless loop (after worker step + after `engineTick.tick`):
+
+- For every `agentId ∈ runtime.inFlightByAgent` there exists an outstanding request for that agent in one of:
+  - `runtime.queue`
+  - worker pending set (in headless: `DeterministicHeadlessWorker.pendingRequests()`)
+  - (transiently) `runtime.decisionBuffer` until the next drain
+
+If this is violated, the agent can get stuck until timeout and determinism breaks.
+
+3) **Fair backpressure must not break lifecycle**
+
+If backpressure drops a request (same-agent oldest or global oldest), then:
+
+- The dropped request’s agent inFlight MUST be cleared **iff** it matches that dropped requestId.
+- The engine MUST emit `AI_BACKPRESSURE` and increment `backpressureDropsTotal`.
+
+4) **Accepted results are applied exactly once and close exactly one lock**
+
+For an **accepted** `DecisionResult`:
+
+- Its `contextHash` matches the current context hash of the agent at ingestion time.
+- It is applied exactly once into the domain through the tick pipeline.
+- It closes (clears) `inFlightByAgent[agentId]` **only** if that inFlight corresponds to this requestId
+  (requestId-guarded; must not close a newer inFlight started later).
+
+5) **Stale / duplicate results are discarded deterministically**
+
+For a drained `DecisionResult` that is not accepted:
+
+- If `contextHash` is stale -> it MUST be discarded with `AI_RESULT_DISCARDED(reason: "stale_context")`.
+- If `intentId` is within TTL -> it MUST be discarded with `AI_RESULT_DISCARDED(reason: "duplicate_intent_ttl")`.
+- If shape/schema is invalid -> it MUST be discarded with `AI_RESULT_DISCARDED(reason: "invalid_shape" | "schema_mismatch")`.
+- In all discard cases, inFlight may be cleared only with requestId-guard (same requestId).
+
+6) **Scheduler never mutates WorldState**
+
+- Scheduler reads WorldState only synchronously during tick wiring.
+- Scheduler mutations are restricted to `SchedulerAPI` allowlist (`enqueue`, `setInFlight`, `clearInFlight`, metrics).
+- Any direct domain calls or world mutations from scheduler are forbidden.
+
+7) **Worker never reads or mutates WorldState**
+
+- Worker must not import world types and must not access WorldState.
+- Worker is transport only: `DecisionRequest -> DecisionResult` into `DecisionBuffer`.
+- No retries without an explicit engine decision; no hidden reads from runtime that imply world knowledge.
+
+8) **Determinism: world signature stability**
+
+Given identical headless parameters (seed, ticks) and identical code:
+
+- `worldSignature(finalWorld)` MUST be identical across runs.
+- This is enforced by CI via `npm run test:headless` (golden verify).
+
 
