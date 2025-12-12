@@ -43,17 +43,9 @@ export function createWorldOps(): WorldOps {
           z: quantize(agent.position.z, 0.25),
         },
         state: agent.state,
-        stats: {
-          energy: Number(agent.energy.toFixed(2)),
-          hunger: Number(agent.hunger.toFixed(2)),
-          anxiety: Number(agent.anxiety.toFixed(2)),
-          aggression: Number(agent.aggression.toFixed(2)),
-        },
-        ai: {
-          lastThinkTick: agent.ai.lastThinkTick,
-          thinkCooldownTicks: agent.ai.thinkCooldownTicks,
-          currentIntentAction: agent.ai.currentIntent?.action ?? null,
-        },
+        memoryRevision: (agent as any).memoryRevision ?? 0,
+        worldRevision: (agent as any).worldRevision ?? 0,
+        perceptsRevision: (agent as any).perceptsRevision ?? 0,
       };
 
       return fnv1a32(JSON.stringify(snapshot));
