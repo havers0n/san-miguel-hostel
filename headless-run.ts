@@ -2,6 +2,7 @@
 // This file is intentionally standalone and does not involve React/Three.
 // Запуск: npx tsx headless-run.ts
 
+import { readFile, writeFile } from "node:fs/promises";
 import { createInitialWorldState } from './mock/worldMock';
 import { EngineRuntime } from './src/core/engine/runtime';
 import { createWorldOps } from './src/core/world/ops';
@@ -12,6 +13,8 @@ import { DeterministicHeadlessWorker } from "./src/core/engine/headless_worker";
 import type { WorldState } from './types/world';
 
 const SIM_DT = 1 / 30; // Фиксированный timestep (30 FPS)
+const GOLDEN_PATH = "headless.golden.json";
+const CHECKPOINT_EVERY = 1000;
 
 function fnv1a32u(input: string): number {
   let hash = 0x811c9dc5;
@@ -22,8 +25,57 @@ function fnv1a32u(input: string): number {
   return hash >>> 0;
 }
 
-function runHeadless(ticks: number = 10_000): void {
-  console.log(`[HEADLESS] Запуск прогона на ${ticks} тиков...`);
+type GoldenFile = {
+  seed: number;
+  ticks: number;
+  finalSig: string;
+  checkpoints?: Record<string, string>;
+};
+
+function parseArgs(argv: string[]): {
+  mode: "run" | "golden" | "verify";
+  seed: number;
+  ticks: number;
+} {
+  let mode: "run" | "golden" | "verify" = "run";
+  let seed = 123;
+  let ticks = 10_000;
+
+  for (const a of argv) {
+    if (a === "--golden") mode = "golden";
+    else if (a === "--verify") mode = "verify";
+    else if (a.startsWith("--seed=")) seed = Number(a.slice("--seed=".length));
+    else if (a.startsWith("--ticks=")) ticks = Number(a.slice("--ticks=".length));
+  }
+
+  if (!Number.isFinite(seed) || seed < 0) throw new Error(`[HEADLESS] invalid --seed=${seed}`);
+  if (!Number.isFinite(ticks) || ticks <= 0) throw new Error(`[HEADLESS] invalid --ticks=${ticks}`);
+  return { mode, seed, ticks };
+}
+
+function validateGoldenFile(x: any): GoldenFile {
+  if (!x || typeof x !== "object") throw new Error(`[HEADLESS] ${GOLDEN_PATH}: invalid JSON root`);
+  if (!Number.isFinite(x.seed)) throw new Error(`[HEADLESS] ${GOLDEN_PATH}: missing/invalid seed`);
+  if (!Number.isFinite(x.ticks)) throw new Error(`[HEADLESS] ${GOLDEN_PATH}: missing/invalid ticks`);
+  if (typeof x.finalSig !== "string") throw new Error(`[HEADLESS] ${GOLDEN_PATH}: missing/invalid finalSig`);
+  if (x.checkpoints != null && typeof x.checkpoints !== "object") {
+    throw new Error(`[HEADLESS] ${GOLDEN_PATH}: invalid checkpoints`);
+  }
+  return x as GoldenFile;
+}
+
+function formatMismatch(label: string, expected: string, actual: string): string {
+  return `[HEADLESS] GOLDEN MISMATCH (${label}) expected=${expected} actual=${actual}`;
+}
+
+function runHeadless(opts: { ticks: number; seed: number }): {
+  seed: number;
+  ticks: number;
+  finalSig: string;
+  checkpoints: Record<string, string>;
+} {
+  const { ticks, seed } = opts;
+  console.log(`[HEADLESS] Запуск прогона на ${ticks} тиков (seed=${seed})...`);
 
   // Инициализация engine (без UI, без worker)
   let nowMs = 0;
@@ -44,7 +96,7 @@ function runHeadless(ticks: number = 10_000): void {
   const engineTick = createEngineTick(runtime, worldOps, scheduler);
 
   // Начальное состояние мира
-  let world: WorldState = createInitialWorldState({ seed: 123, agentCount: 6 });
+  let world: WorldState = createInitialWorldState({ seed, agentCount: 6 });
   let engineTickCounter = 0;
 
   const startTime = Date.now();
@@ -117,6 +169,8 @@ function runHeadless(ticks: number = 10_000): void {
     }
   };
 
+  const checkpoints: Record<string, string> = {};
+
   // Прогон тиков
   for (let i = 0; i < ticks; i++) {
     nowMs += SIM_DT * 1000;
@@ -131,10 +185,11 @@ function runHeadless(ticks: number = 10_000): void {
     assertInvariants(i + 1);
 
     // Периодический вывод прогресса с подписью мира (Iter 12.2)
-    if ((i + 1) % 1000 === 0) {
+    if ((i + 1) % CHECKPOINT_EVERY === 0) {
       const elapsed = Date.now() - startTime;
       const avgMsPerTick = elapsed / (i + 1);
       const sig = worldSignature(world);
+      checkpoints[String(i + 1)] = sig;
       console.log(
         `[HEADLESS] Тик ${i + 1}/${ticks} | ` +
         `Агентов: ${world.agents.length} | ` +
@@ -155,7 +210,8 @@ function runHeadless(ticks: number = 10_000): void {
   console.log(`  Время выполнения: ${totalTime}ms (${(totalTime / 1000).toFixed(2)}s)`);
   console.log(`  Среднее время на тик: ${avgMsPerTick.toFixed(3)}ms`);
   console.log(`  Финальный tick мира: ${world.tick}`);
-  console.log(`  Финальная подпись: ${worldSignature(world)}`);
+  const finalSig = worldSignature(world);
+  console.log(`  Финальная подпись: ${finalSig}`);
   console.log(`  Агентов: ${world.agents.length}`);
   console.log(`  Событий в истории: ${world.events.length}`);
   console.log(`  Метрики engine:`);
@@ -177,8 +233,60 @@ function runHeadless(ticks: number = 10_000): void {
   console.log(
     `    - AI_RESULT_DISCARDED by reason: ${JSON.stringify(Object.fromEntries(discardsByReason.entries()))}`
   );
+
+  return { seed, ticks, finalSig, checkpoints };
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+
+  if (args.mode === "verify") {
+    const raw = await readFile(GOLDEN_PATH, "utf8").catch(() => null);
+    if (raw == null) {
+      console.error(`[HEADLESS] missing ${GOLDEN_PATH}. Run: npx tsx headless-run.ts --golden`);
+      process.exit(1);
+    }
+    const golden = validateGoldenFile(JSON.parse(raw));
+
+    // verify always runs using golden params (so CI doesn't depend on CLI defaults)
+    const res = runHeadless({ ticks: golden.ticks, seed: golden.seed });
+
+    if (res.finalSig !== golden.finalSig) {
+      console.error(formatMismatch("finalSig", golden.finalSig, res.finalSig));
+      process.exit(1);
+    }
+
+    if (golden.checkpoints) {
+      for (const [k, expected] of Object.entries(golden.checkpoints)) {
+        const actual = res.checkpoints[k];
+        if (actual !== expected) {
+          console.error(formatMismatch(`checkpoint@${k}`, expected, String(actual)));
+          process.exit(1);
+        }
+      }
+    }
+
+    console.log(`[HEADLESS] GOLDEN OK: finalSig=${res.finalSig}`);
+    return;
+  }
+
+  const res = runHeadless({ ticks: args.ticks, seed: args.seed });
+
+  if (args.mode === "golden") {
+    const golden: GoldenFile = {
+      seed: res.seed,
+      ticks: res.ticks,
+      finalSig: res.finalSig,
+      checkpoints: res.checkpoints,
+    };
+    await writeFile(GOLDEN_PATH, JSON.stringify(golden, null, 2) + "\n", "utf8");
+    console.log(`[HEADLESS] WROTE GOLDEN: ${GOLDEN_PATH} finalSig=${res.finalSig}`);
+  }
 }
 
 // Запуск
-runHeadless(10_000);
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
 
