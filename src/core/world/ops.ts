@@ -36,7 +36,8 @@ function quantize(n: number, step: number): number {
   return Math.round(n / step) * step;
 }
 
-export function createWorldOps(): WorldOps {
+export function createWorldOps(opts?: { nowMs?: () => number }): WorldOps {
+  const now = opts?.nowMs ?? (() => Date.now());
   return {
     getAgentContextHash(world, agentId) {
       const agent = world.agents.find((a) => a.id === agentId);
@@ -60,7 +61,7 @@ export function createWorldOps(): WorldOps {
     },
 
     getNowMs() {
-      return Date.now();
+      return now();
     },
 
     applyDecisions(world, decisions) {
