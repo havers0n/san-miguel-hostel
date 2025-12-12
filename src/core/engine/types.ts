@@ -6,7 +6,13 @@ export type EngineEvent =
   | { type: "SIM_DROPPED_TICKS"; tick: Tick; dropped: number }
   | { type: "AI_BACKPRESSURE"; tick: Tick; agentId: string; droppedIntentId?: string }
   | { type: "COMMAND_REJECTED"; tick: Tick; commandId: string; reason: string }
-  | { type: "AI_RESULT_DISCARDED"; tick: Tick; agentId: string; requestId: string; reason: string };
+  | {
+      type: "AI_RESULT_DISCARDED";
+      tick: Tick;
+      agentId: string;
+      requestId: string;
+      reason: "stale_context" | "duplicate_intent_ttl" | "schema_mismatch" | string;
+    };
 
 export type Command = {
   id: string;

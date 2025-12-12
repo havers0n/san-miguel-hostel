@@ -7,8 +7,10 @@
 // NOTE: временный импорт из legacy world types; позже переедет в src/core/world/types.ts.
 import type { AgentDecision, WorldEvent, WorldState } from "../../../types/world";
 import { drainCommandBuffer, drainDecisionBuffer } from "./drain";
+import { filterDecisionResults } from "./decisions";
 import type { EngineRuntime } from "./runtime";
 import type { WorldOps } from "../world/ops";
+import type { DecisionResult } from "./types";
 
 export function createEngineTick(runtime: EngineRuntime, worldOps: WorldOps): {
   tick(
@@ -19,11 +21,39 @@ export function createEngineTick(runtime: EngineRuntime, worldOps: WorldOps): {
 } {
   return {
     tick(world: WorldState, simDt: number, _engineTick: number) {
-      const rawResults = drainDecisionBuffer(runtime);
-      // TODO(iter7): decisionBuffer will hold DecisionResult; apply after filter+validation instead of casting.
+      const nowMs = worldOps.getNowMs();
+
+      const raw = drainDecisionBuffer(runtime) as unknown as unknown[];
+      const rawResults = raw.filter((x): x is DecisionResult => {
+        if (!x || typeof x !== "object") return false;
+        return (
+          "requestId" in x &&
+          "agentId" in x &&
+          "intentId" in x &&
+          "contextHash" in x &&
+          "decision" in x
+        );
+      });
+
+      const getCtx = (agentId: string) => ({
+        contextHash: worldOps.getAgentContextHash(world, agentId),
+        nowMs,
+      });
+
+      const { accepted, events: discardEvents } = filterDecisionResults(
+        runtime,
+        _engineTick,
+        rawResults,
+        getCtx
+      );
+      if (discardEvents.length) runtime.pushEngineEvents(discardEvents);
+
+      // TTL sweep (cheap), no timers.
+      if (_engineTick % 60 === 0) runtime.seenIntentIds.sweep(nowMs);
+
       const { world: world1, events: events1 } = worldOps.applyDecisions(
         world,
-        rawResults as unknown as AgentDecision[]
+        accepted.map((r) => r.decision) as unknown as AgentDecision[]
       );
 
       const commands = drainCommandBuffer(runtime);
