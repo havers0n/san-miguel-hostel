@@ -87,9 +87,18 @@ export function createEngineTick(
           "agentId" in x &&
           "intentId" in x &&
           "contextHash" in x &&
+          "createdAtMs" in x &&
           "decision" in x
         );
       });
+      // Determinism: worker/network arrival order is nondeterministic; stabilize before filtering/apply.
+      rawResults.sort(
+        (a, b) =>
+          (a.createdAtMs - b.createdAtMs) ||
+          a.agentId.localeCompare(b.agentId) ||
+          a.intentId.localeCompare(b.intentId) ||
+          a.requestId.localeCompare(b.requestId)
+      );
 
       const getCtx = (agentId: string) => ({
         contextHash: worldOps.getAgentContextHash(world, agentId),
