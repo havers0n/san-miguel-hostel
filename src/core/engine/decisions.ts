@@ -13,11 +13,26 @@ export function filterDecisionResults(
   const events: EngineEvent[] = [];
 
   for (const r of results) {
-    // 1) exactly-once by requestId
-    if (runtime.seenRequestIds.has(r.requestId)) continue;
-    runtime.seenRequestIds.add(r.requestId);
-
     const { contextHash: currentHash, nowMs } = getCtx(r.agentId);
+
+    // 1) exactly-once by requestId (TTL bounded)
+    if (runtime.seenRequestIds.has(r.requestId, nowMs)) {
+      runtime.metrics.decisionDiscardedTotal++;
+      events.push({
+        type: "AI_RESULT_DISCARDED",
+        tick: engineTick,
+        agentId: r.agentId,
+        requestId: r.requestId,
+        reason: "duplicate_request_id_ttl",
+      });
+      // free inFlight if this result matches the currently tracked requestId
+      const inflight = runtime.inFlightByAgent.get(r.agentId);
+      if (inflight && inflight.requestId === r.requestId) {
+        runtime.inFlightByAgent.delete(r.agentId);
+      }
+      continue;
+    }
+    runtime.seenRequestIds.add(r.requestId, nowMs);
 
     // 2) stale by contextHash
     if (r.contextHash !== currentHash) {

@@ -114,7 +114,10 @@ export function createEngineTick(
       if (discardEvents.length) runtime.pushEngineEvents(discardEvents);
 
       // TTL sweep (cheap), no timers.
-      if (_engineTick % 60 === 0) runtime.seenIntentIds.sweep(nowMs);
+      if (_engineTick % 60 === 0) {
+        runtime.seenIntentIds.sweep(nowMs);
+        runtime.seenRequestIds.sweep(nowMs);
+      }
 
       const { world: world1, events: events1 } = worldOps.applyDecisions(
         world,
