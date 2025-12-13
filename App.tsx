@@ -66,9 +66,11 @@ function App() {
   }
   const seed = readIntParam(search, 'seed', 123);
   const agentCount = readIntParam(search, 'agents', 6);
-  const stopAtTick = search.has('ticks') ? readIntParam(search, 'ticks', 0) : 0;
+  const ticksParamPresent = search.has('ticks');
+  const stopAtTick = ticksParamPresent ? readIntParam(search, 'ticks', 0) : 0;
   const stopAtTickSafe = stopAtTick > 0 ? stopAtTick : null;
   const stoppedRef = useRef(false);
+  const [stopInfo, setStopInfo] = useState<{ tick: number; reason: string } | null>(null);
 
   // Source of truth (mutated only by transactional tick)
   const worldRef = useRef<WorldState>(createInitialWorldState({ seed, agentCount }));
@@ -128,7 +130,10 @@ function App() {
 
       if (stopAtTickSafe != null && !stoppedRef.current && worldRef.current.tick >= stopAtTickSafe) {
         stoppedRef.current = true;
+        workerStopRef.current?.();
+        workerStopRef.current = null;
         const sig = worldSignature(worldRef.current);
+        setStopInfo({ tick: worldRef.current.tick, reason: `ticks=${stopAtTickSafe}` });
         console.log(
           JSON.stringify({
             event: 'UI_RUN_STOPPED',
@@ -248,7 +253,34 @@ function App() {
   const selectedAgent = uiWorld.agents.find(a => a.id === selectedAgentId) || null;
   const sig = worldSignature(uiWorld);
 
+  const liveTicksGuardEnabled = engineMode === 'live' && ticksParamPresent;
+  const stopForNondeterministicInput = (details: { kind: 'floor_click' | 'command'; commandType?: string }) => {
+    if (!liveTicksGuardEnabled) return false;
+    if (stoppedRef.current) return true;
+
+    stoppedRef.current = true;
+    workerStopRef.current?.();
+    workerStopRef.current = null;
+
+    const tick = worldRef.current.tick;
+    setStopInfo({ tick, reason: 'UI_NONDETERMINISTIC_INPUT (live + ticks=...)' });
+
+    console.warn(
+      JSON.stringify({
+        event: 'UI_NONDETERMINISTIC_INPUT',
+        engineMode,
+        seed,
+        agentCount,
+        ticks: stopAtTick,
+        tick,
+        ...details,
+      })
+    );
+    return true;
+  };
+
   const handleFloorClick = (point: THREE.Vector3) => {
+    if (stopForNondeterministicInput({ kind: 'floor_click' })) return;
     if (selectedAgentId) {
       const runtime = runtimeRef.current;
       if (!runtime) return;
@@ -264,6 +296,7 @@ function App() {
 
   const handleMoveToRoom = (roomId: string) => {
     if (selectedAgentId) {
+      if (stopForNondeterministicInput({ kind: 'command', commandType: 'MOVE_TO_ROOM' })) return;
       const runtime = runtimeRef.current;
       if (!runtime) return;
       runtime.commandBuffer.push({
@@ -319,9 +352,9 @@ function App() {
             </button>
            </div>
 
-           {stopAtTickSafe != null && stoppedRef.current && (
+           {stopInfo != null && (
              <div className="bg-black/70 backdrop-blur text-yellow-300 px-3 py-1 rounded text-xs font-mono border border-yellow-900/50">
-               STOPPED at tick {uiWorld.tick} (ticks={stopAtTickSafe})
+               STOPPED at tick {stopInfo.tick} ({stopInfo.reason})
              </div>
            )}
            

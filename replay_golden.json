@@ -1,0 +1,11 @@
+{
+  "seed": 123,
+  "agents": 6,
+  "ticks": 1800,
+  "sig": "da5396ff",
+  "proxyMode": "replay",
+  "promptVersion": "iter11-local",
+  "bucket": "san-miguel-decisions-gen-lang-client-0765392891",
+  "prefix": "records"
+}
+
