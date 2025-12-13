@@ -15,6 +15,7 @@ import { createEngineTick } from './src/core/engine/tick';
 import { startDecisionWorker, type ExecuteDecision } from './src/core/engine/decision_worker';
 import type { DecisionRequest, DecisionResult } from './src/core/engine/types';
 import { makeProxyExecutor } from './src/core/engine/execute_proxy';
+import { worldSignature } from './src/core/world/signature';
 
 const SceneViewport = React.memo(function SceneViewport(props: {
   worldRef: React.RefObject<WorldState>;
@@ -65,6 +66,9 @@ function App() {
   }
   const seed = readIntParam(search, 'seed', 123);
   const agentCount = readIntParam(search, 'agents', 6);
+  const stopAtTick = search.has('ticks') ? readIntParam(search, 'ticks', 0) : 0;
+  const stopAtTickSafe = stopAtTick > 0 ? stopAtTick : null;
+  const stoppedRef = useRef(false);
 
   // Source of truth (mutated only by transactional tick)
   const worldRef = useRef<WorldState>(createInitialWorldState({ seed, agentCount }));
@@ -92,7 +96,11 @@ function App() {
     if (runtimeRef.current) return;
 
     const runtime = new EngineRuntime();
-    const worldOps = createWorldOps();
+    // Deterministic simulation clock:
+    // - do NOT use Date.now() inside engine for nowMs; it breaks record→replay comparability.
+    // - start at 0 for stable runs; progresses by fixed SIM_DT each tick.
+    let simNowMs = 0;
+    const worldOps = createWorldOps({ nowMs: () => simNowMs });
     const scheduler = createScheduler(worldOps, {
       promptVersion: 'iter11-local',
       ttlMs: 20_000,
@@ -113,8 +121,26 @@ function App() {
 
     let loop: EngineLoop;
     loop = new EngineLoop(runtime, (simDt) => {
+      // advance deterministic time before tick (matches headless ordering)
+      simNowMs += simDt * 1000;
       const res = engineTick.tick(worldRef.current, simDt, loop.engineTick);
       worldRef.current = res.world;
+
+      if (stopAtTickSafe != null && !stoppedRef.current && worldRef.current.tick >= stopAtTickSafe) {
+        stoppedRef.current = true;
+        const sig = worldSignature(worldRef.current);
+        console.log(
+          JSON.stringify({
+            event: 'UI_RUN_STOPPED',
+            seed,
+            agentCount,
+            stopAtTick: stopAtTickSafe,
+            tick: worldRef.current.tick,
+            sig,
+            engineMode,
+          })
+        );
+      }
     });
 
     const proxyUrl = (import.meta as any).env?.VITE_PROXY_URL as string | undefined;
@@ -188,6 +214,7 @@ function App() {
 
     const frame = (nowMs: number) => {
       if (cancelled) return;
+      if (stoppedRef.current) return;
       const loop = loopRef.current;
       if (!loop) {
         rafIdRef.current = requestAnimationFrame(frame);
@@ -219,6 +246,7 @@ function App() {
   }, []);
 
   const selectedAgent = uiWorld.agents.find(a => a.id === selectedAgentId) || null;
+  const sig = worldSignature(uiWorld);
 
   const handleFloorClick = (point: THREE.Vector3) => {
     if (selectedAgentId) {
@@ -271,6 +299,12 @@ function App() {
             <div className="bg-black/80 backdrop-blur text-white px-3 py-1 rounded border border-gray-700 text-xs font-mono">
                 TICK: {uiWorld.tick}
             </div>
+            <div className="bg-black/80 backdrop-blur text-white px-3 py-1 rounded border border-gray-700 text-xs font-mono">
+                SEED: {seed} AGENTS: {agentCount}
+            </div>
+            <div className="bg-black/80 backdrop-blur text-white px-3 py-1 rounded border border-gray-700 text-xs font-mono">
+                SIG: {sig}
+            </div>
             <button 
                 onClick={() => setCameraMode(prev => prev === 'TOP_DOWN' ? 'THIRD_PERSON' : 'TOP_DOWN')}
                 className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-xs font-bold transition-colors shadow-lg"
@@ -284,6 +318,12 @@ function App() {
                 DEBUG: {debugMode ? 'ON' : 'OFF'}
             </button>
            </div>
+
+           {stopAtTickSafe != null && stoppedRef.current && (
+             <div className="bg-black/70 backdrop-blur text-yellow-300 px-3 py-1 rounded text-xs font-mono border border-yellow-900/50">
+               STOPPED at tick {uiWorld.tick} (ticks={stopAtTickSafe})
+             </div>
+           )}
            
            {selectedAgent && (
              <div className="bg-black/60 backdrop-blur text-green-300 px-3 py-1 rounded text-xs font-mono border border-green-900/50">
