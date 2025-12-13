@@ -18,3 +18,9 @@ View your app in AI Studio: https://ai.studio/apps/drive/1D9VTrUPJH7p9q_ILrzEGKZ
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Cloud Run: `gemini-proxy` health check
+
+**Health check endpoint:** `GET /healthz/`
+
+Note the trailing slash — it is required by the Cloud Run frontend behavior for this service (requests to `/healthz` may return a Google Frontend 404 and not reach the container).
