@@ -29,7 +29,8 @@ async function waitForHealthz(baseUrl: string, timeoutMs: number): Promise<void>
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await fetch(`${baseUrl}/healthz`, { method: "GET" });
+      // Canonical endpoint: note the trailing slash (matches Cloud Run frontend behavior).
+      const res = await fetch(`${baseUrl}/healthz/`, { method: "GET" });
       const text = await res.text();
       if (res.status === 200 && text === "ok") return;
     } catch {
@@ -37,7 +38,7 @@ async function waitForHealthz(baseUrl: string, timeoutMs: number): Promise<void>
     }
     await sleep(100);
   }
-  throw new Error(`timeout waiting for GET ${baseUrl}/healthz`);
+  throw new Error(`timeout waiting for GET ${baseUrl}/healthz/`);
 }
 
 async function main(): Promise<void> {
@@ -94,11 +95,11 @@ async function main(): Promise<void> {
 
     // Gate 1: health endpoint must be reachable and stable.
     {
-      const res = await fetch(`${baseUrl}/healthz`, { method: "GET" });
+      const res = await fetch(`${baseUrl}/healthz/`, { method: "GET" });
       const text = await res.text();
       if (res.status !== 200 || text !== "ok") {
         throw new Error(
-          `GET /healthz expected 200 'ok', got ${res.status} ${JSON.stringify(text)}`
+          `GET /healthz/ expected 200 'ok', got ${res.status} ${JSON.stringify(text)}`
         );
       }
     }
