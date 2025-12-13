@@ -9,9 +9,10 @@ export type ExecuteDecision = (req: DecisionRequest) => Promise<DecisionResult>;
 export function startDecisionWorker(
   runtime: EngineRuntime,
   execute: ExecuteDecision,
-  opts?: { intervalMs?: number }
+  opts?: { intervalMs?: number; getTick?: () => number }
 ): { stop: () => void } {
   const intervalMs = opts?.intervalMs ?? 50;
+  const getTick = opts?.getTick ?? (() => 0);
 
   let stopped = false;
   let runningCount = 0;
@@ -28,18 +29,55 @@ export function startDecisionWorker(
       if (!req) break;
 
       runningCount++;
+      const startMs = Date.now();
+      runtime.pushEngineEvents([
+        { type: "AI_REQUEST_SENT", tick: getTick(), agentId: req.agentId, requestId: req.requestId },
+      ]);
       execute(req)
         .then((result) => {
-          runtime.decisionBuffer.push(result);
-        })
-        .catch(() => {
+          // Safety: never push undefined/invalid results silently.
+          if (
+            !result ||
+            typeof result !== "object" ||
+            result.requestId !== req.requestId ||
+            result.agentId !== req.agentId
+          ) {
+            runtime.pushEngineEvents([
+              {
+                type: "AI_REQUEST_FAILED",
+                tick: getTick(),
+                agentId: req.agentId,
+                requestId: req.requestId,
+                reason: "invalid_result_shape",
+              },
+            ]);
+            const inflight = runtime.inFlightByAgent.get(req.agentId);
+            if (inflight && inflight.requestId === req.requestId) {
+              runtime.inFlightByAgent.delete(req.agentId);
+            }
+            return;
+          }
+
           runtime.pushEngineEvents([
             {
-              type: "AI_RESULT_DISCARDED",
-              tick: 0,
+              type: "AI_RESULT_RECEIVED",
+              tick: getTick(),
               agentId: req.agentId,
               requestId: req.requestId,
-              reason: "worker_error",
+              latencyMs: Date.now() - startMs,
+            },
+          ]);
+          runtime.decisionBuffer.push(result);
+        })
+        .catch((err) => {
+          const reason = err instanceof Error ? err.message : String(err);
+          runtime.pushEngineEvents([
+            {
+              type: "AI_REQUEST_FAILED",
+              tick: getTick(),
+              agentId: req.agentId,
+              requestId: req.requestId,
+              reason,
             },
           ]);
           const inflight = runtime.inFlightByAgent.get(req.agentId);

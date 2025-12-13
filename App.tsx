@@ -12,7 +12,9 @@ import { EngineLoop } from './src/core/engine/loop';
 import { createWorldOps } from './src/core/world/ops';
 import { createScheduler } from './src/core/engine/scheduler';
 import { createEngineTick } from './src/core/engine/tick';
-import { startDecisionWorker } from './src/core/engine/decision_worker';
+import { startDecisionWorker, type ExecuteDecision } from './src/core/engine/decision_worker';
+import type { DecisionRequest, DecisionResult } from './src/core/engine/types';
+import { makeProxyExecutor } from './src/core/engine/execute_proxy';
 
 const SceneViewport = React.memo(function SceneViewport(props: {
   worldRef: React.RefObject<WorldState>;
@@ -96,27 +98,52 @@ function App() {
       worldRef.current = res.world;
     });
 
-    const worker = startDecisionWorker(
-      runtime,
-      async (req) => {
-        const decision: AgentDecision = {
-          agentId: req.agentId,
-          tickPlanned: 0,
-          action: 'WANDER',
-          reason: 'local_worker',
-        };
-        return {
-          requestId: req.requestId,
-          agentId: req.agentId,
-          intentId: req.intentId,
-          contextHash: req.contextHash,
-          createdAtMs: worldOps.getNowMs(),
-          decisionSchemaVersion: 1,
-          decision,
-        };
-      },
-      { intervalMs: 50 }
-    );
+    const engineMode = (import.meta as any).env?.VITE_ENGINE_MODE ?? 'local';
+    const proxyUrl = (import.meta as any).env?.VITE_PROXY_URL as string | undefined;
+
+    const localExecute: ExecuteDecision = async (req: DecisionRequest): Promise<DecisionResult> => {
+      const decision: AgentDecision = {
+        agentId: req.agentId,
+        tickPlanned: 0,
+        action: 'WANDER',
+        reason: 'local_worker',
+      };
+      return {
+        requestId: req.requestId,
+        agentId: req.agentId,
+        intentId: req.intentId,
+        contextHash: req.contextHash,
+        createdAtMs: worldOps.getNowMs(),
+        decisionSchemaVersion: 1,
+        decision,
+      };
+    };
+
+    const execute =
+      engineMode === 'live'
+        ? (() => {
+            if (!proxyUrl) {
+              // Misconfigured live mode: disable scheduling to avoid inflight buildup/timeouts.
+              runtime.maxConcurrentRequestsTotal = 0;
+              runtime.pushEngineEvents([
+                {
+                  type: 'AI_REQUEST_FAILED',
+                  tick: 0,
+                  agentId: 'engine',
+                  requestId: 'proxy_url_missing',
+                  reason: 'VITE_PROXY_URL missing (VITE_ENGINE_MODE=live)',
+                },
+              ]);
+              return localExecute;
+            }
+            return makeProxyExecutor({ baseUrl: proxyUrl });
+          })()
+        : localExecute;
+
+    const worker = startDecisionWorker(runtime, execute, {
+      intervalMs: 50,
+      getTick: () => loop.engineTick,
+    });
 
     runtimeRef.current = runtime;
     loopRef.current = loop;
