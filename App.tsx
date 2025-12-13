@@ -46,9 +46,28 @@ const SceneViewport = React.memo(function SceneViewport(props: {
   );
 });
 
+function readIntParam(search: URLSearchParams, name: string, def: number): number {
+  const v = search.get(name);
+  const n = v != null ? Number(v) : NaN;
+  // Force int32 semantics for stability.
+  return Number.isFinite(n) ? (n | 0) : def;
+}
+
 function App() {
+  const engineMode = (import.meta as any).env?.VITE_ENGINE_MODE ?? 'local';
+
+  // Deterministic live startup:
+  // - seed and agent count must be part of launch config (URL) to support record → replay comparability.
+  const search = new URLSearchParams(window.location.search);
+  if (engineMode === 'live' && !search.has('seed')) {
+    // Strict by design: prevents accidental record runs with random init that will never replay.
+    throw new Error('Live mode requires deterministic init: provide ?seed=... (e.g. ?seed=123&agents=6)');
+  }
+  const seed = readIntParam(search, 'seed', 123);
+  const agentCount = readIntParam(search, 'agents', 6);
+
   // Source of truth (mutated only by transactional tick)
-  const worldRef = useRef<WorldState>(createInitialWorldState());
+  const worldRef = useRef<WorldState>(createInitialWorldState({ seed, agentCount }));
 
   // UI snapshots (bounded refresh rates; no 30 FPS setState for whole app)
   const [uiWorld, setUiWorld] = useState<WorldState>(worldRef.current);
@@ -98,7 +117,6 @@ function App() {
       worldRef.current = res.world;
     });
 
-    const engineMode = (import.meta as any).env?.VITE_ENGINE_MODE ?? 'local';
     const proxyUrl = (import.meta as any).env?.VITE_PROXY_URL as string | undefined;
 
     const localExecute: ExecuteDecision = async (req: DecisionRequest): Promise<DecisionResult> => {
