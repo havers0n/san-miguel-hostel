@@ -196,10 +196,13 @@ export function validateDecideIn(body: unknown): Validated {
     agentId: request.agentId,
     intentId: request.intentId,
     contextHash: request.contextHash,
-    createdAtMs: Date.now(),
+    // Determinism: make fallback a pure function of the request input.
+    // If you need server time, add a separate servedAtMs field (do not overload createdAtMs).
+    createdAtMs: request.createdAtMs,
     decisionSchemaVersion: 1,
     decision: {
       agentId: request.agentId,
+      // Contract (iter 14): fallback does not plan ticks; engine normalizes scheduling if needed.
       tickPlanned: 0,
       reason: "fallback",
       action: fallbackAction,
