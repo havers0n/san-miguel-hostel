@@ -14,7 +14,8 @@ export function makeKey(opts: {
   const p = opts.prefix.replace(/^\/+|\/+$/g, "");
   const pv = encodeURIComponent(opts.promptVersion);
   const rid = encodeURIComponent(opts.requestId);
-  return `${p}/${pv}/${rid}.json`;
+  // Convention: explicit labels in path segments improve GCS console search and reduce ambiguity.
+  return `${p}/pv=${pv}/requestId=${rid}.json`;
 }
 
 export function makeGcsStore(opts: { bucket: string }): GcsStore {

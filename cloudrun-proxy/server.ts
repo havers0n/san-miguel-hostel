@@ -60,32 +60,38 @@ app.post("/decide", async (req, res) => {
   let wasCacheHit = false;
   let wasStoreHit = false;
   let wasFallback = false;
+  let wasReplayMiss = false;
 
   try {
     const validated = validateDecideIn(req.body);
     const { input, fallback } = validated;
 
     const nowMs = Date.now();
-    sweepCache(nowMs);
 
-    const cached = cache.get(input.request.requestId);
-    if (cached && cached.expiresAt > nowMs) {
-      wasCacheHit = true;
-      const latencyMs = Date.now() - startMs;
-      console.log(
-        JSON.stringify({
-          requestId: input.request.requestId,
-          agentId: input.request.agentId,
-          intentId: input.request.intentId,
-          action: null,
-          latencyMs,
-          wasCacheHit,
-          wasStoreHit,
-          wasFallback,
-          proxyMode: PROXY_MODE,
-        })
-      );
-      return res.status(200).type("application/json").send(cached.bodyText);
+    // Cache is ONLY for live mode idempotency within an instance.
+    // In record/replay, the GCS store must remain the source of truth (and visible in logs).
+    if (PROXY_MODE === "live") {
+      sweepCache(nowMs);
+      const cached = cache.get(input.request.requestId);
+      if (cached && cached.expiresAt > nowMs) {
+        wasCacheHit = true;
+        const latencyMs = Date.now() - startMs;
+        console.log(
+          JSON.stringify({
+            requestId: input.request.requestId,
+            agentId: input.request.agentId,
+            intentId: input.request.intentId,
+            action: null,
+            latencyMs,
+            wasCacheHit,
+            wasStoreHit,
+            wasFallback,
+            wasReplayMiss,
+            proxyMode: PROXY_MODE,
+          })
+        );
+        return res.status(200).type("application/json").send(cached.bodyText);
+      }
     }
 
     // GCS replay/record: store is the source of truth for bit-for-bit responses.
@@ -112,10 +118,12 @@ app.post("/decide", async (req, res) => {
       const stored = await store.get(objectKey);
       if (stored) {
         wasStoreHit = true;
-        cache.set(input.request.requestId, {
-          bodyText: stored,
-          expiresAt: nowMs + IDEMPOTENCY_TTL_MS,
-        });
+        if (PROXY_MODE === "live") {
+          cache.set(input.request.requestId, {
+            bodyText: stored,
+            expiresAt: nowMs + IDEMPOTENCY_TTL_MS,
+          });
+        }
         const latencyMs = Date.now() - startMs;
         console.log(
           JSON.stringify({
@@ -127,6 +135,7 @@ app.post("/decide", async (req, res) => {
             wasCacheHit,
             wasStoreHit,
             wasFallback,
+            wasReplayMiss,
             proxyMode: PROXY_MODE,
           })
         );
@@ -136,6 +145,18 @@ app.post("/decide", async (req, res) => {
 
     // 2) replay miss is a hard miss
     if (PROXY_MODE === "replay") {
+      wasReplayMiss = true;
+      console.warn(
+        JSON.stringify({
+          event: "replay_miss",
+          requestId: input.request.requestId,
+          agentId: input.request.agentId,
+          intentId: input.request.intentId,
+          objectKey,
+          latencyMs: Date.now() - startMs,
+          proxyMode: PROXY_MODE,
+        })
+      );
       return res.status(404).json({
         error: "replay_miss",
         requestId: input.request.requestId,
@@ -170,6 +191,7 @@ app.post("/decide", async (req, res) => {
           wasCacheHit,
           wasStoreHit,
           wasFallback,
+          wasReplayMiss,
           proxyMode: PROXY_MODE,
         })
       );
@@ -197,19 +219,23 @@ app.post("/decide", async (req, res) => {
         // Race winner already stored; return the winner to guarantee bit-for-bit idempotency.
         const winner = await store.get(objectKey);
         if (winner) {
-          cache.set(input.request.requestId, {
-            bodyText: winner,
-            expiresAt: nowMs + IDEMPOTENCY_TTL_MS,
-          });
+          if (PROXY_MODE === "live") {
+            cache.set(input.request.requestId, {
+              bodyText: winner,
+              expiresAt: nowMs + IDEMPOTENCY_TTL_MS,
+            });
+          }
           return res.status(200).type("application/json").send(winner);
         }
       }
     }
 
-    cache.set(input.request.requestId, {
-      bodyText,
-      expiresAt: nowMs + IDEMPOTENCY_TTL_MS,
-    });
+    if (PROXY_MODE === "live") {
+      cache.set(input.request.requestId, {
+        bodyText,
+        expiresAt: nowMs + IDEMPOTENCY_TTL_MS,
+      });
+    }
 
     const latencyMs = Date.now() - startMs;
     console.log(
@@ -222,6 +248,7 @@ app.post("/decide", async (req, res) => {
         wasCacheHit,
         wasStoreHit,
         wasFallback,
+        wasReplayMiss,
         proxyMode: PROXY_MODE,
       })
     );

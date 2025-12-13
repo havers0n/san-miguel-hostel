@@ -8,6 +8,7 @@
     "dev": "tsx watch server.ts",
     "build": "tsc -p tsconfig.json",
     "test:smoke": "npm run build && node dist/smoke.js",
+    "test:smoke:gcs": "npm run build && node dist/smoke_gcs.js",
     "start": "node dist/server.js"
   },
   "dependencies": {
