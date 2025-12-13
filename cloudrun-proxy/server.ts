@@ -36,6 +36,29 @@ const bucket = createTokenBucket({ rps: RPS, burst: BURST });
 const app = express();
 app.disable("x-powered-by");
 
+/* ===== CORS MUST BE FIRST (before body parsing & routes) ===== */
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+
+  // Allow the exact headers the browser asks for (typical: "content-type").
+  // This keeps the proxy compatible with stricter client setups without hardcoding a growing list.
+  const requestedHeaders = req.headers["access-control-request-headers"];
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    typeof requestedHeaders === "string" && requestedHeaders.trim().length > 0
+      ? requestedHeaders
+      : "Content-Type"
+  );
+  res.setHeader("Access-Control-Max-Age", "600");
+  res.setHeader("Vary", "Origin");
+
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+  next();
+});
+
 // Health endpoints MUST be registered before any middleware/routers.
 // Cloud Run / load balancers should always get a fast 200 without body parsing.
 app.get("/healthz", (_req, res) => {
