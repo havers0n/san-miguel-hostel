@@ -10,7 +10,9 @@ export class EngineRuntime {
 
   // Exactly-once / anti-dup
   seenRequestIds = new Set<string>();
-  seenIntentIds = new TTLSet(20_000);
+  // Must cover the full request TTL window to prevent late duplicate results from being accepted.
+  // Proxy enforces ttlMs <= 120_000, so using 120s here is safe and conservative.
+  seenIntentIds = new TTLSet(120_000);
 
   // Scheduler state (bounded)
   queue: DecisionRequest[] = [];
