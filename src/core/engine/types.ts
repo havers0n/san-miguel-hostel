@@ -15,13 +15,20 @@ export type EngineEvent =
       droppedRequestId?: string;
     }
   | { type: "COMMAND_REJECTED"; tick: Tick; commandId: string; reason: string }
-  | { type: "AI_REQUEST_SENT"; tick: Tick; agentId: string; requestId: string }
+  | {
+      type: "AI_REQUEST_SENT";
+      tick: Tick;
+      agentId: string;
+      requestId: string;
+      createdAtMs: number;
+    }
   | {
       type: "AI_RESULT_RECEIVED";
       tick: Tick;
       agentId: string;
       requestId: string;
       latencyMs: number;
+      createdAtMs: number;
     }
   | {
       type: "AI_REQUEST_FAILED";
@@ -29,6 +36,7 @@ export type EngineEvent =
       agentId: string;
       requestId: string;
       reason: string;
+      createdAtMs: number;
     }
   | {
       type: "AI_RESULT_DISCARDED";

@@ -30,8 +30,15 @@ export function startDecisionWorker(
 
       runningCount++;
       const startMs = Date.now();
+      const tickAtSend = getTick();
       runtime.pushEngineEvents([
-        { type: "AI_REQUEST_SENT", tick: getTick(), agentId: req.agentId, requestId: req.requestId },
+        {
+          type: "AI_REQUEST_SENT",
+          tick: tickAtSend,
+          agentId: req.agentId,
+          requestId: req.requestId,
+          createdAtMs: req.createdAtMs,
+        },
       ]);
       execute(req)
         .then((result) => {
@@ -49,6 +56,7 @@ export function startDecisionWorker(
                 agentId: req.agentId,
                 requestId: req.requestId,
                 reason: "invalid_result_shape",
+                createdAtMs: req.createdAtMs,
               },
             ]);
             const inflight = runtime.inFlightByAgent.get(req.agentId);
@@ -65,6 +73,7 @@ export function startDecisionWorker(
               agentId: req.agentId,
               requestId: req.requestId,
               latencyMs: Date.now() - startMs,
+              createdAtMs: req.createdAtMs,
             },
           ]);
           runtime.decisionBuffer.push(result);
@@ -78,6 +87,7 @@ export function startDecisionWorker(
               agentId: req.agentId,
               requestId: req.requestId,
               reason,
+              createdAtMs: req.createdAtMs,
             },
           ]);
           const inflight = runtime.inFlightByAgent.get(req.agentId);

@@ -124,6 +124,7 @@ function App() {
         ? (() => {
             if (!proxyUrl) {
               // Misconfigured live mode: disable scheduling to avoid inflight buildup/timeouts.
+              // Note: VITE_* env is baked at build time; recovery requires a runtime restart/reload.
               runtime.maxConcurrentRequestsTotal = 0;
               runtime.pushEngineEvents([
                 {
@@ -132,6 +133,7 @@ function App() {
                   agentId: 'engine',
                   requestId: 'proxy_url_missing',
                   reason: 'VITE_PROXY_URL missing (VITE_ENGINE_MODE=live)',
+                  createdAtMs: worldOps.getNowMs(),
                 },
               ]);
               return localExecute;
