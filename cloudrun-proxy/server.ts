@@ -1,6 +1,8 @@
 import express from "express";
 import { createTokenBucket } from "./rateLimit.js";
 import { ValidationError, validateDecideIn, type DecisionResultOut } from "./validate.js";
+import { canonicalStringify } from "./canonicalStringify.js";
+import { makeGcsStore, makeKey } from "./gcsStore.js";
 
 const PORT = Number(process.env.PORT ?? "8080");
 const BODY_LIMIT = process.env.BODY_LIMIT ?? "64kb";
@@ -9,9 +11,17 @@ const BODY_LIMIT = process.env.BODY_LIMIT ?? "64kb";
 const RPS = Number(process.env.RATE_LIMIT_RPS ?? "20");
 const BURST = Number(process.env.RATE_LIMIT_BURST ?? "40");
 
+// replay: read-only from GCS, 404 on miss
+// record: store result to GCS (canonical JSON), return bit-for-bit bodyText
+// live: compute result (Gemini later), may optionally store if BUCKET is configured
+const PROXY_MODE = (process.env.PROXY_MODE ?? "record") as "replay" | "record" | "live";
+const BUCKET = process.env.DECISION_STORE_GCS_BUCKET;
+const PREFIX = process.env.DECISION_STORE_PREFIX ?? "records";
+const store = BUCKET ? makeGcsStore({ bucket: BUCKET }) : null;
+
 const IDEMPOTENCY_TTL_MS = 60_000;
 
-type CacheEntry = { result: DecisionResultOut; expiresAt: number };
+type CacheEntry = { bodyText: string; expiresAt: number };
 const cache = new Map<string, CacheEntry>();
 
 function sweepCache(nowMs: number): void {
@@ -44,10 +54,11 @@ app.use(
   })
 );
 
-app.post("/decide", (req, res) => {
+app.post("/decide", async (req, res) => {
   const startMs = Date.now();
 
   let wasCacheHit = false;
+  let wasStoreHit = false;
   let wasFallback = false;
 
   try {
@@ -66,28 +77,85 @@ app.post("/decide", (req, res) => {
           requestId: input.request.requestId,
           agentId: input.request.agentId,
           intentId: input.request.intentId,
-          action: (cached.result.decision as any)?.action ?? null,
+          action: null,
           latencyMs,
           wasCacheHit,
+          wasStoreHit,
           wasFallback,
+          proxyMode: PROXY_MODE,
         })
       );
-      return res.status(200).json(cached.result);
+      return res.status(200).type("application/json").send(cached.bodyText);
     }
 
-    if (!bucket.tryTake(1)) {
-      wasFallback = true;
-      const out: DecisionResultOut = {
-        ...fallback,
-        createdAtMs: nowMs,
-        decision: {
-          ...fallback.decision,
-          reason: "rate_limited",
-        },
-      };
+    // GCS replay/record: store is the source of truth for bit-for-bit responses.
+    if (PROXY_MODE !== "live") {
+      if (!store) {
+        return res.status(500).json({
+          error: "config_error",
+          message: "DECISION_STORE_GCS_BUCKET is required for PROXY_MODE=record|replay",
+          latencyMs: Date.now() - startMs,
+        });
+      }
+    }
 
+    const objectKey = store
+      ? makeKey({
+          prefix: PREFIX,
+          promptVersion: input.request.promptVersion,
+          requestId: input.request.requestId,
+        })
+      : null;
+
+    // 1) Store hit (replay / previously recorded)
+    if (store && objectKey) {
+      const stored = await store.get(objectKey);
+      if (stored) {
+        wasStoreHit = true;
+        cache.set(input.request.requestId, {
+          bodyText: stored,
+          expiresAt: nowMs + IDEMPOTENCY_TTL_MS,
+        });
+        const latencyMs = Date.now() - startMs;
+        console.log(
+          JSON.stringify({
+            requestId: input.request.requestId,
+            agentId: input.request.agentId,
+            intentId: input.request.intentId,
+            action: null,
+            latencyMs,
+            wasCacheHit,
+            wasStoreHit,
+            wasFallback,
+            proxyMode: PROXY_MODE,
+          })
+        );
+        return res.status(200).type("application/json").send(stored);
+      }
+    }
+
+    // 2) replay miss is a hard miss
+    if (PROXY_MODE === "replay") {
+      return res.status(404).json({
+        error: "replay_miss",
+        requestId: input.request.requestId,
+        latencyMs: Date.now() - startMs,
+      });
+    }
+
+    // 3) live mode rate-limit (do not persist to GCS to avoid poisoning replay)
+    if (PROXY_MODE === "live" && !bucket.tryTake(1)) {
+      wasFallback = true;
+      const outObj: DecisionResultOut = {
+        ...fallback,
+        // Determinism: never overwrite createdAtMs (fallback is already request.createdAtMs).
+        decision: { ...fallback.decision, reason: "rate_limited" },
+      };
+      const bodyText = canonicalStringify(outObj);
+
+      // In-memory cache keeps idempotency within a single instance without poisoning the store.
       cache.set(input.request.requestId, {
-        result: out,
+        bodyText,
         expiresAt: nowMs + IDEMPOTENCY_TTL_MS,
       });
 
@@ -97,28 +165,49 @@ app.post("/decide", (req, res) => {
           requestId: input.request.requestId,
           agentId: input.request.agentId,
           intentId: input.request.intentId,
-          action: out.decision.action,
+          action: outObj.decision.action,
           latencyMs,
           wasCacheHit,
+          wasStoreHit,
           wasFallback,
+          proxyMode: PROXY_MODE,
         })
       );
-      return res.status(200).json(out);
+      return res.status(200).type("application/json").send(bodyText);
     }
 
     // Iter 14: no Gemini yet — always fallback, but must still be a valid DecisionResult.
     wasFallback = true;
-    const out: DecisionResultOut = {
+    const outObj: DecisionResultOut = {
       ...fallback,
-      createdAtMs: nowMs,
+      // Determinism: never overwrite createdAtMs (fallback is already request.createdAtMs).
       decision: {
         ...fallback.decision,
-        reason: "fallback_iter14",
+        reason: PROXY_MODE === "record" ? "fallback_record" : "fallback_iter14",
       },
     };
 
+    const bodyText = canonicalStringify(outObj);
+
+    // Write-once to store (record mode; live mode writes only if BUCKET is configured)
+    // At this point PROXY_MODE is guaranteed to be != "replay" (replay misses already returned 404).
+    if (store && objectKey) {
+      const put = await store.putIfAbsent(objectKey, bodyText);
+      if (put === "exists") {
+        // Race winner already stored; return the winner to guarantee bit-for-bit idempotency.
+        const winner = await store.get(objectKey);
+        if (winner) {
+          cache.set(input.request.requestId, {
+            bodyText: winner,
+            expiresAt: nowMs + IDEMPOTENCY_TTL_MS,
+          });
+          return res.status(200).type("application/json").send(winner);
+        }
+      }
+    }
+
     cache.set(input.request.requestId, {
-      result: out,
+      bodyText,
       expiresAt: nowMs + IDEMPOTENCY_TTL_MS,
     });
 
@@ -128,14 +217,16 @@ app.post("/decide", (req, res) => {
         requestId: input.request.requestId,
         agentId: input.request.agentId,
         intentId: input.request.intentId,
-        action: out.decision.action,
+        action: outObj.decision.action,
         latencyMs,
         wasCacheHit,
+        wasStoreHit,
         wasFallback,
+        proxyMode: PROXY_MODE,
       })
     );
 
-    return res.status(200).json(out);
+    return res.status(200).type("application/json").send(bodyText);
   } catch (err) {
     const latencyMs = Date.now() - startMs;
     if (err instanceof ValidationError) {
@@ -167,6 +258,8 @@ app.listen(PORT, () => {
       port: PORT,
       bodyLimit: BODY_LIMIT,
       rateLimit: { rps: RPS, burst: BURST },
+      proxyMode: PROXY_MODE,
+      storeEnabled: Boolean(BUCKET),
     })
   );
 });

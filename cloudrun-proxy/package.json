@@ -11,6 +11,7 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.18.0",
     "express": "^4.21.2"
   },
   "devDependencies": {
@@ -20,7 +21,3 @@
     "typescript": "~5.8.2"
   }
 }
-
-
-
-
