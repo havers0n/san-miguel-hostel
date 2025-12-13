@@ -64,16 +64,21 @@ export function createScheduler(worldOps: WorldOps, config: SchedulerConfig): Sc
         if (contextHash.startsWith("missing:")) continue;
         const intentId = `${agentId}:${contextHash}`;
 
+        // Deterministic requestId is required for proxy idempotency and safe retries.
+        // Do NOT include seq in the id — it breaks reproducibility across scheduling order changes.
+        const seqNo = seq++;
+        const requestId =
+          config.requestIdFactory?.({
+            seq: seqNo,
+            agentId,
+            intentId,
+            contextHash,
+            createdAtMs: nowMs,
+            promptVersion: config.promptVersion,
+          }) ?? `v1:${config.promptVersion}:${agentId}:${contextHash}`;
+
         const req: DecisionRequest = {
-          requestId:
-            config.requestIdFactory?.({
-              seq: seq++,
-              agentId,
-              intentId,
-              contextHash,
-              createdAtMs: nowMs,
-              promptVersion: config.promptVersion,
-            }) ?? randomUUIDFallback(),
+          requestId,
           agentId,
           intentId,
           contextHash,
