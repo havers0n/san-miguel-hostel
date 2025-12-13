@@ -26,16 +26,23 @@ const bucket = createTokenBucket({ rps: RPS, burst: BURST });
 const app = express();
 app.disable("x-powered-by");
 
+// Health endpoints MUST be registered before any middleware/routers.
+// Cloud Run / load balancers should always get a fast 200 without body parsing.
+app.get("/healthz", (_req, res) => {
+  res.status(200).type("text/plain").send("ok");
+});
+
+// Optional: convenient root probe endpoint.
+app.get("/", (_req, res) => {
+  res.status(200).type("text/plain").send("ok");
+});
+
 app.use(
   express.json({
     limit: BODY_LIMIT,
     type: ["application/json", "application/*+json"],
   })
 );
-
-app.get("/healthz", (_req, res) => {
-  res.status(200).type("text/plain").send("ok");
-});
 
 app.post("/decide", (req, res) => {
   const startMs = Date.now();
@@ -163,5 +170,3 @@ app.listen(PORT, () => {
     })
   );
 });
-
-
