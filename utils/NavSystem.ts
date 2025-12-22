@@ -70,37 +70,138 @@ export class NavGrid {
     }
   }
 
+  // Helper: Check if two rectangles intersect
+  private rectanglesIntersect(
+    rect1: { x: number; z: number; sizeX: number; sizeZ: number },
+    rect2: { x: number; z: number; sizeX: number; sizeZ: number }
+  ): boolean {
+    const r1Left = rect1.x - rect1.sizeX / 2;
+    const r1Right = rect1.x + rect1.sizeX / 2;
+    const r1Top = rect1.z - rect1.sizeZ / 2;
+    const r1Bottom = rect1.z + rect1.sizeZ / 2;
+
+    const r2Left = rect2.x - rect2.sizeX / 2;
+    const r2Right = rect2.x + rect2.sizeX / 2;
+    const r2Top = rect2.z - rect2.sizeZ / 2;
+    const r2Bottom = rect2.z + rect2.sizeZ / 2;
+
+    return !(r1Right < r2Left || r1Left > r2Right || r1Bottom < r2Top || r1Top > r2Bottom);
+  }
+
+  // Mark obstacle with exclusion zones (for doors)
+  markObstacleWithExclusions(
+    pos: { x: number; z: number },
+    size: { x: number; z: number },
+    exclusions: Array<{ x: number; z: number; sizeX: number; sizeZ: number }>
+  ) {
+    const start = this.worldToGrid({ x: pos.x - size.x / 2, z: pos.z - size.z / 2 });
+    const end = this.worldToGrid({ x: pos.x + size.x / 2, z: pos.z + size.z / 2 });
+
+    for (let x = start.x; x <= end.x; x++) {
+      for (let z = start.z; z <= end.z; z++) {
+        if (x >= 0 && x < this.width && z >= 0 && z < this.height) {
+          // Convert grid cell center back to world coords to check exclusion
+          const worldPos = this.gridToWorld({ x, z });
+          
+          // Check if this cell is in any exclusion zone
+          let isExcluded = false;
+          for (const excl of exclusions) {
+            const exclLeft = excl.x - excl.sizeX / 2;
+            const exclRight = excl.x + excl.sizeX / 2;
+            const exclTop = excl.z - excl.sizeZ / 2;
+            const exclBottom = excl.z + excl.sizeZ / 2;
+            
+            if (worldPos.x >= exclLeft && worldPos.x <= exclRight &&
+                worldPos.z >= exclTop && worldPos.z <= exclBottom) {
+              isExcluded = true;
+              break;
+            }
+          }
+          
+          if (!isExcluded) {
+            this.cells[x][z] = false;
+          }
+        }
+      }
+    }
+  }
+
   // Initialize grid with static geometry
   initialize(rooms: Room[], envObjects: EnvObject[]) {
     // Reset to walkable
     this.cells = Array(this.width).fill(false).map(() => Array(this.height).fill(true));
 
-    // 1. Mark Room Walls
+    // Collect all doors first
+    const doors = envObjects.filter(obj => obj.kind === 'DOOR');
+    
+    // 1. Mark Room Walls (excluding door areas)
     rooms.forEach(room => {
       const halfX = room.size.x / 2;
       const halfZ = room.size.z / 2;
       const thickness = 0.4; // Slightly thicker than visual to ensure blocking
 
-      // Top (-Z) & Bottom (+Z) walls
-      this.markObstacle({ x: room.position.x, z: room.position.z - halfZ }, { x: room.size.x, z: thickness });
-      this.markObstacle({ x: room.position.x, z: room.position.z + halfZ }, { x: room.size.x, z: thickness });
-      
-      // Left (-X) & Right (+X) walls
-      this.markObstacle({ x: room.position.x - halfX, z: room.position.z }, { x: thickness, z: room.size.z });
-      this.markObstacle({ x: room.position.x + halfX, z: room.position.z }, { x: thickness, z: room.size.z });
+      // Find doors that intersect with each wall
+      const topWallExclusions = doors.filter(door => {
+        const wallRect = { x: room.position.x, z: room.position.z - halfZ, sizeX: room.size.x, sizeZ: thickness };
+        const doorRect = { x: door.position.x, z: door.position.z, sizeX: door.size.x, sizeZ: door.size.z };
+        return this.rectanglesIntersect(wallRect, doorRect);
+      }).map(door => ({ x: door.position.x, z: door.position.z, sizeX: door.size.x, sizeZ: door.size.z }));
+
+      const bottomWallExclusions = doors.filter(door => {
+        const wallRect = { x: room.position.x, z: room.position.z + halfZ, sizeX: room.size.x, sizeZ: thickness };
+        const doorRect = { x: door.position.x, z: door.position.z, sizeX: door.size.x, sizeZ: door.size.z };
+        return this.rectanglesIntersect(wallRect, doorRect);
+      }).map(door => ({ x: door.position.x, z: door.position.z, sizeX: door.size.x, sizeZ: door.size.z }));
+
+      const leftWallExclusions = doors.filter(door => {
+        const wallRect = { x: room.position.x - halfX, z: room.position.z, sizeX: thickness, sizeZ: room.size.z };
+        const doorRect = { x: door.position.x, z: door.position.z, sizeX: door.size.x, sizeZ: door.size.z };
+        return this.rectanglesIntersect(wallRect, doorRect);
+      }).map(door => ({ x: door.position.x, z: door.position.z, sizeX: door.size.x, sizeZ: door.size.z }));
+
+      const rightWallExclusions = doors.filter(door => {
+        const wallRect = { x: room.position.x + halfX, z: room.position.z, sizeX: thickness, sizeZ: room.size.z };
+        const doorRect = { x: door.position.x, z: door.position.z, sizeX: door.size.x, sizeZ: door.size.z };
+        return this.rectanglesIntersect(wallRect, doorRect);
+      }).map(door => ({ x: door.position.x, z: door.position.z, sizeX: door.size.x, sizeZ: door.size.z }));
+
+      // Mark walls with exclusions
+      this.markObstacleWithExclusions(
+        { x: room.position.x, z: room.position.z - halfZ },
+        { x: room.size.x, z: thickness },
+        topWallExclusions
+      );
+      this.markObstacleWithExclusions(
+        { x: room.position.x, z: room.position.z + halfZ },
+        { x: room.size.x, z: thickness },
+        bottomWallExclusions
+      );
+      this.markObstacleWithExclusions(
+        { x: room.position.x - halfX, z: room.position.z },
+        { x: thickness, z: room.size.z },
+        leftWallExclusions
+      );
+      this.markObstacleWithExclusions(
+        { x: room.position.x + halfX, z: room.position.z },
+        { x: thickness, z: room.size.z },
+        rightWallExclusions
+      );
     });
 
-    // 2. Mark EnvObjects (Furniture)
+    // 2. Mark EnvObjects (Furniture) - excluding doors
     envObjects.forEach(obj => {
         if (obj.kind === 'DOOR') return; // process doors later
         this.markObstacle(obj.position, obj.size);
     });
 
-    // 3. Unblock Doors
-    envObjects.forEach(obj => {
-        if (obj.kind === 'DOOR') {
-            this.markWalkable(obj.position, obj.size);
-        }
+    // 3. Ensure Doors are walkable (with extra margin for easier passage)
+    doors.forEach(door => {
+        // Make door area slightly larger for easier passage
+        const doorMargin = 0.3; // Extra margin around door
+        this.markWalkable(
+          door.position,
+          { x: door.size.x + doorMargin, z: door.size.z + doorMargin }
+        );
     });
   }
 

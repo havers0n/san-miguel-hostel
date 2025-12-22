@@ -59,10 +59,10 @@ const ENV_OBJECTS: EnvObject[] = [
   { id: 'table1', kind: 'TABLE', roomId: 'r3', position: { x: 5, y: 1, z: 5 }, size: { x: 3, y: 1.5, z: 3 } },
   // Kitchen
   { id: 'k1', kind: 'KITCHEN', roomId: 'r4', position: { x: 13, y: 1, z: 5 }, size: { x: 1, y: 2, z: 4 } },
-  // Doors
-  { id: 'd1', kind: 'DOOR', roomId: 'r1', position: { x: -5, y: 1.5, z: -1.2 }, size: { x: 2, y: 3, z: 0.4 } },
-  { id: 'd2', kind: 'DOOR', roomId: 'r2', position: { x: 5, y: 1.5, z: -1.2 }, size: { x: 2, y: 3, z: 0.4 } },
-  { id: 'd3', kind: 'DOOR', roomId: 'r3', position: { x: 0, y: 1.5, z: 0.2 }, size: { x: 4, y: 3, z: 0.4 } },
+  // Doors - increased size for more reliable passage
+  { id: 'd1', kind: 'DOOR', roomId: 'r1', position: { x: -5, y: 1.5, z: -1.2 }, size: { x: 2.5, y: 3, z: 0.6 } },
+  { id: 'd2', kind: 'DOOR', roomId: 'r2', position: { x: 5, y: 1.5, z: -1.2 }, size: { x: 2.5, y: 3, z: 0.6 } },
+  { id: 'd3', kind: 'DOOR', roomId: 'r3', position: { x: 0, y: 1.5, z: 0.2 }, size: { x: 4.5, y: 3, z: 0.6 } },
 ];
 
 export const navGrid = new NavGrid();
@@ -137,8 +137,8 @@ function createAgent(i: number, rng: RNG): Agent {
 // --- Initialization ---
 
 export function createInitialWorldState(opts?: { seed?: number; agentCount?: number; rng?: RNG }): WorldState {
-  // Default сохраняет прежнее поведение (недетерминированный Math.random) для UI.
-  // Для headless детерминизма передаём seed или rng.
+  // Default preserves previous behavior (non-deterministic Math.random) for UI.
+  // For headless determinism, pass seed or rng.
   const rng =
     opts?.rng ??
     (opts?.seed != null ? mulberry32((opts.seed ?? 1) >>> 0) : Math.random);
