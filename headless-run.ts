@@ -10,6 +10,7 @@ import { createScheduler } from './src/core/engine/scheduler';
 import { createEngineTick } from './src/core/engine/tick';
 import { worldSignature } from './src/core/world/signature';
 import { DeterministicHeadlessWorker } from "./src/core/engine/headless_worker";
+import { makeL0BrainDecision } from "./src/core/engine/l0_brain";
 import type { WorldState } from './types/world';
 
 const SIM_DT = 1 / 30; // Фиксированный timestep (30 FPS)
@@ -114,6 +115,7 @@ function runHeadless(opts: { ticks: number; seed: number }): {
 
   // Iter 12.3: deterministic worker simulation (no timers, no access to world)
   const execute = (req: any) => {
+    const decision = makeL0BrainDecision(req, seed);
     const base = {
       requestId: req.requestId,
       agentId: req.agentId,
@@ -121,12 +123,7 @@ function runHeadless(opts: { ticks: number; seed: number }): {
       contextHash: req.contextHash,
       createdAtMs: req.createdAtMs,
       decisionSchemaVersion: 1 as const,
-      decision: {
-        agentId: req.agentId,
-        tickPlanned: 0,
-        action: "WANDER",
-        reason: "headless",
-      },
+      decision,
     };
 
     const results = [base];

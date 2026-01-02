@@ -1,0 +1,169 @@
+---
+alwaysApply: true
+---
+A. NON-NEGOTIABLE ENGINE RULES (ломаешь → баги гарантированы)
+1) WorldState мутируется только внутри tick()
+
+Запрещено:
+
+мутация world из async, scheduler, worker, UI
+
+скрытые мутации через ссылки
+
+Разрешено:
+
+только через pipeline:
+
+drain → filter → applyDecisions → reduceCommands → step
+
+2) Async-код не знает о WorldState
+
+Worker / proxy / scheduler:
+
+не импортируют WorldState
+
+не получают world по ссылке
+
+работают только с runtime-буферами
+
+Если async “хочет знать мир” — он получает сериализованный contextHash, не world.
+
+3) Все внешние входы проходят через буферы
+
+Единственные входы в систему:
+
+runtime.commandBuffer (UI / input)
+
+runtime.queue (scheduler → worker)
+
+runtime.decisionBuffer (worker → engine)
+
+Прямые вызовы функций домена извне — запрещены.
+
+4) Exactly-once — обязательный контракт
+
+requestId → exactly-once (network safety)
+
+intentId → TTL exactly-once (semantic safety)
+
+stale по contextHash → discard, не retry
+
+Повторное применение решения = баг.
+
+5) InFlight — runtime-lock, не бизнес-логика
+
+inFlight живёт только в EngineRuntime
+
+ставится только если enqueue succeeded
+
+снимается:
+
+при принятии результата
+
+при timeout
+
+при worker_error
+
+Если агент “завис” → это баг engine, не AI.
+
+6) Scheduler — write-only к runtime
+
+Scheduler:
+
+❌ не мутирует WorldState
+
+❌ не читает runtime напрямую
+
+✅ работает только через SchedulerAPI
+
+Любое расширение SchedulerAPI — отдельное решение.
+
+7) Engine events ≠ Domain events
+
+AI_RESULT_DISCARDED, SIM_DROPPED_TICKS, AI_BACKPRESSURE
+→ engine-events
+
+CONFLICT, MOVE, INTERACTION
+→ domain-events
+
+Смешивание = потеря семантики.
+
+B. TIME & DETERMINISM RULES
+8) Fixed timestep — обязателен
+
+SIM_DT фиксирован
+
+accumulator + MAX_ACCUM
+
+dropped ticks логируются, не скрываются
+
+UI FPS ≠ simulation FPS.
+
+9) Один nowMs на тик
+
+Date.now() вызывается один раз на тик
+
+передаётся дальше как значение
+
+никакого “текущего времени” внутри фильтров/TTL
+
+10) Headless-прогон обязателен
+
+Любое изменение engine должно позволять:
+
+for (let i=0;i<10000;i++) tick(world)
+
+
+Если без UI это невозможно — правило нарушено.
+
+C. TRANSPORT / WORKER RULES
+11) Worker уважает engine-лимиты
+
+Worker обязан:
+
+учитывать maxConcurrentRequestsTotal
+
+не превышать inFlight
+
+не делать retries без решения engine
+
+Worker — тупой транспорт, не умный агент.
+
+12) Ошибка worker ≠ ошибка engine
+
+ошибка execution → AI_RESULT_DISCARDED(reason:"worker_error")
+
+engine остаётся жив
+
+агент освобождается
+
+Никаких throw наружу.
+
+D. DEVELOPMENT & REVIEW RULES
+13) Любая новая асинхронщина — отдельный RFC
+
+Если появляется:
+
+новый async процесс
+
+новый worker
+
+новый источник решений
+
+→ сначала описание жизненного цикла, потом код.
+
+14) Новые поля WorldState = ревизионная модель
+
+Если добавляешь данные, влияющие на AI:
+
+либо входят в contextHash
+
+либо увеличивают perceptsRevision / memoryRevision
+
+Иначе stale-решения станут неуловимыми.
+
+15) Никаких “временно, потом поправим”
+
+TODO допустимы только с номером итерации
+
+“потом” без даты = технический долг

@@ -5,7 +5,8 @@
   "sig": "da5396ff",
   "proxyMode": "replay",
   "promptVersion": "iter11-local",
-  "bucket": "san-miguel-decisions-gen-lang-client-0765392891",
+  "bucket": "YOUR_BUCKET_NAME",
   "prefix": "records"
 }
+
 

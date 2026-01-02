@@ -16,6 +16,7 @@ import { startDecisionWorker, type ExecuteDecision } from './src/core/engine/dec
 import type { DecisionRequest, DecisionResult } from './src/core/engine/types';
 import { makeProxyExecutor } from './src/core/engine/execute_proxy';
 import { worldSignature } from './src/core/world/signature';
+import { makeL0BrainDecision } from './src/core/engine/l0_brain';
 
 const SceneViewport = React.memo(function SceneViewport(props: {
   worldRef: React.RefObject<WorldState>;
@@ -151,20 +152,19 @@ function App() {
     const proxyUrl = (import.meta as any).env?.VITE_PROXY_URL as string | undefined;
 
     const localExecute: ExecuteDecision = async (req: DecisionRequest): Promise<DecisionResult> => {
-      const decision: AgentDecision = {
-        agentId: req.agentId,
-        tickPlanned: 0,
-        action: 'WANDER',
-        reason: 'local_worker',
-      };
+      const decision = makeL0BrainDecision(req, seed);
+      
       return {
         requestId: req.requestId,
         agentId: req.agentId,
         intentId: req.intentId,
         contextHash: req.contextHash,
-        createdAtMs: worldOps.getNowMs(),
+        createdAtMs: req.createdAtMs,          // <-- фикс детерминизма
         decisionSchemaVersion: 1,
-        decision,
+        decision: {
+          ...decision,
+          reason: decision.reason ?? "local_l0",
+        },
       };
     };
 
